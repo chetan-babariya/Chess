@@ -57,7 +57,7 @@ let playerToken = null; // Secret session token
 let myName = '';
 let currentTurn = 'white';
 let isFlipped = false;
-let boardState = null; // 8x8 array
+let boardState = null; // 8x8 authoritative board array
 let selectedSq = null;
 let lastMove = null;
 let inCheck = false;
@@ -68,6 +68,102 @@ let currentFen = '';
 let currentPgn = '';
 let pendingPromotion = null;
 let currentPlayers = { white: null, black: null };
+
+// ─── Premove System State (chess.com-style) ───────────────────────────────────
+const PREMOVE_SETTINGS_KEYS = {
+  enabled: 'chess_premove_enabled',
+  mode: 'chess_premove_mode',
+  promo: 'chess_premove_promo'
+};
+
+let premoveSettings = {
+  enabled: true,
+  mode: 'unlimited', // 'single' or 'unlimited'
+  promo: 'q'        // 'q', 'r', 'b', 'n'
+};
+
+let premoveQueue = [];      // [{ from: [r,c], to: [r,c], fromAlg, toAlg, promotion, piece }]
+let virtualBoardState = null; // Virtual 8x8 board with client-queued moves applied
+let premoveSelectedSq = null; // Selected piece during opponent's turn
+
+function loadPremoveSettings() {
+  const savedEnabled = localStorage.getItem(PREMOVE_SETTINGS_KEYS.enabled);
+  if (savedEnabled !== null) {
+    premoveSettings.enabled = (savedEnabled === 'true');
+  }
+  const savedMode = localStorage.getItem(PREMOVE_SETTINGS_KEYS.mode);
+  if (savedMode === 'single' || savedMode === 'unlimited') {
+    premoveSettings.mode = savedMode;
+  }
+  const savedPromo = localStorage.getItem(PREMOVE_SETTINGS_KEYS.promo);
+  if (['q', 'r', 'b', 'n'].includes(savedPromo)) {
+    premoveSettings.promo = savedPromo;
+  }
+
+  // Update modal controls
+  const toggleEl = document.getElementById('setting-premove-enabled');
+  if (toggleEl) toggleEl.checked = premoveSettings.enabled;
+
+  const modeRadios = document.querySelectorAll('input[name="premove-mode"]');
+  modeRadios.forEach(r => {
+    r.checked = (r.value === premoveSettings.mode);
+  });
+
+  const promoEl = document.getElementById('setting-default-promo');
+  if (promoEl) promoEl.value = premoveSettings.promo;
+}
+
+function openSettingsModal() {
+  loadPremoveSettings();
+  const modal = document.getElementById('settings-modal');
+  if (modal) modal.classList.remove('hidden');
+}
+
+function closeSettingsModal() {
+  const modal = document.getElementById('settings-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function saveSettingsModal() {
+  const toggleEl = document.getElementById('setting-premove-enabled');
+  if (toggleEl) premoveSettings.enabled = toggleEl.checked;
+
+  const checkedMode = document.querySelector('input[name="premove-mode"]:checked');
+  if (checkedMode) premoveSettings.mode = checkedMode.value;
+
+  const promoEl = document.getElementById('setting-default-promo');
+  if (promoEl) premoveSettings.promo = promoEl.value;
+
+  localStorage.setItem(PREMOVE_SETTINGS_KEYS.enabled, premoveSettings.enabled);
+  localStorage.setItem(PREMOVE_SETTINGS_KEYS.mode, premoveSettings.mode);
+  localStorage.setItem(PREMOVE_SETTINGS_KEYS.promo, premoveSettings.promo);
+
+  closeSettingsModal();
+  showToast('Settings saved.', 'success', 2000);
+}
+
+function selectHostColor(color, btn, mode) {
+  const inputId = mode === 'pvp' ? 'pvp-color-val' : 'ai-color-val';
+  const containerId = mode === 'pvp' ? 'pvp-color-picker' : 'ai-color-picker';
+  const input = document.getElementById(inputId);
+  if (input) input.value = color;
+
+  const container = document.getElementById(containerId);
+  if (container) {
+    const btns = container.querySelectorAll('.color-btn');
+    btns.forEach(b => {
+      b.className = 'color-btn p-2 rounded-xl border border-slate-800 bg-slate-950 text-center hover:border-slate-700 transition cursor-pointer flex flex-col items-center justify-center gap-1';
+      const label = b.querySelector('span:last-child');
+      if (label) label.className = 'text-xs font-bold text-slate-300';
+    });
+  }
+
+  const activeColorClass = mode === 'pvp' ? 'border-indigo-500/50 bg-indigo-600/20' : 'border-emerald-500/50 bg-emerald-600/20';
+  const activeTextClass = mode === 'pvp' ? 'text-indigo-300' : 'text-emerald-300';
+  btn.className = `color-btn active p-2 rounded-xl border ${activeColorClass} text-center transition cursor-pointer flex flex-col items-center justify-center gap-1`;
+  const activeLabel = btn.querySelector('span:last-child');
+  if (activeLabel) activeLabel.className = `text-xs font-bold ${activeTextClass}`;
+}
 
 // ─── Toast Notifications Manager (Fix #5) ─────────────────────────────────────
 function showToast(message, type = 'info', duration = 3500) {
@@ -307,9 +403,185 @@ function renderTray(el, pieceTypes) {
   }
 }
 
+// ─── Premove & Virtual Board Helpers ──────────────────────────────────────────
+function getActiveBoard() {
+  return virtualBoardState || boardState;
+}
+
+function applyMoveToVirtualBoard(fromR, fromC, toR, toC, promo) {
+  if (!virtualBoardState) {
+    virtualBoardState = boardState.map(row => [...row]);
+  }
+  const p = virtualBoardState[fromR][fromC];
+  if (!p) return;
+
+  // Castling
+  if (p.toLowerCase() === 'k' && Math.abs(toC - fromC) === 2) {
+    if (toC === 6) { // Kingside
+      virtualBoardState[fromR][5] = virtualBoardState[fromR][7];
+      virtualBoardState[fromR][7] = null;
+    } else if (toC === 2) { // Queenside
+      virtualBoardState[fromR][3] = virtualBoardState[fromR][0];
+      virtualBoardState[fromR][0] = null;
+    }
+  }
+
+  // En Passant
+  if (p.toLowerCase() === 'p' && fromC !== toC && !virtualBoardState[toR][toC]) {
+    virtualBoardState[fromR][toC] = null;
+  }
+
+  // Move piece & handle pawn promotion
+  if (promo && p.toLowerCase() === 'p' && (toR === 0 || toR === 7)) {
+    virtualBoardState[toR][toC] = (p === p.toUpperCase()) ? promo.toUpperCase() : promo.toLowerCase();
+  } else {
+    virtualBoardState[toR][toC] = p;
+  }
+  virtualBoardState[fromR][fromC] = null;
+}
+
+function rebuildVirtualBoard() {
+  if (premoveQueue.length === 0) {
+    virtualBoardState = null;
+    return;
+  }
+  virtualBoardState = boardState.map(row => [...row]);
+  for (const pm of premoveQueue) {
+    applyMoveToVirtualBoard(pm.from[0], pm.from[1], pm.to[0], pm.to[1], pm.promotion);
+  }
+}
+
+function cancelPremoves() {
+  premoveQueue = [];
+  virtualBoardState = null;
+  premoveSelectedSq = null;
+  renderBoard();
+}
+
+function handlePremoveClick(r, c) {
+  const activeBoard = getActiveBoard();
+  if (!activeBoard) return;
+  const piece = activeBoard[r][c];
+  const isMyPiece = piece && (myRole === 'white' ? piece === piece.toUpperCase() : piece === piece.toLowerCase());
+
+  if (premoveSelectedSq) {
+    // Clicking same square cancels selection
+    if (premoveSelectedSq[0] === r && premoveSelectedSq[1] === c) {
+      premoveSelectedSq = null;
+      renderBoard();
+      return;
+    }
+
+    const legals = getPieceMoves(premoveSelectedSq[0], premoveSelectedSq[1], activeBoard);
+    const isTarget = legals.some(t => t[0] === r && t[1] === c);
+
+    if (isTarget) {
+      if (premoveSettings.mode === 'single') {
+        premoveQueue = [];
+        virtualBoardState = null;
+      }
+
+      const curBoard = getActiveBoard();
+      const movingPiece = curBoard[premoveSelectedSq[0]][premoveSelectedSq[1]];
+      const isPawn = movingPiece && movingPiece.toLowerCase() === 'p';
+      const isPromotion = isPawn && (r === 0 || r === 7);
+      const promo = isPromotion ? (premoveSettings.promo || 'q') : undefined;
+
+      const fromAlg = squareToAlg(premoveSelectedSq[0], premoveSelectedSq[1]);
+      const toAlg = squareToAlg(r, c);
+
+      premoveQueue.push({
+        from: [premoveSelectedSq[0], premoveSelectedSq[1]],
+        to: [r, c],
+        fromAlg,
+        toAlg,
+        promotion: promo,
+        piece: movingPiece
+      });
+
+      applyMoveToVirtualBoard(premoveSelectedSq[0], premoveSelectedSq[1], r, c, promo);
+      premoveSelectedSq = null;
+      playSound('move');
+      renderBoard();
+      return;
+    }
+
+    // Reselect another piece
+    if (isMyPiece) {
+      premoveSelectedSq = [r, c];
+      playSound('move');
+      renderBoard();
+      return;
+    }
+
+    // Click on destination of queued premove cancels that premove
+    const clickedPremoveIndex = premoveQueue.findIndex(pm => pm.to[0] === r && pm.to[1] === c);
+    if (clickedPremoveIndex !== -1) {
+      premoveQueue.splice(clickedPremoveIndex, 1);
+      rebuildVirtualBoard();
+      premoveSelectedSq = null;
+      renderBoard();
+      return;
+    }
+
+    premoveSelectedSq = null;
+    renderBoard();
+    return;
+  }
+
+  // No piece selected yet
+  if (isMyPiece) {
+    premoveSelectedSq = [r, c];
+    playSound('move');
+    renderBoard();
+  } else {
+    const clickedPremoveIndex = premoveQueue.findIndex(pm => pm.to[0] === r && pm.to[1] === c);
+    if (clickedPremoveIndex !== -1) {
+      premoveQueue.splice(clickedPremoveIndex, 1);
+      rebuildVirtualBoard();
+      renderBoard();
+    }
+  }
+}
+
+function executeNextPremove() {
+  if (premoveQueue.length === 0 || currentTurn !== myRole || isGameOver) {
+    virtualBoardState = null;
+    renderBoard();
+    return;
+  }
+
+  const next = premoveQueue.shift();
+  // Validate move against authoritative boardState
+  const legalMoves = getPieceMoves(next.from[0], next.from[1], boardState);
+  const isLegal = legalMoves.some(t => t[0] === next.to[0] && t[1] === next.to[1]);
+
+  if (isLegal) {
+    rebuildVirtualBoard();
+    renderBoard();
+
+    const movingPiece = boardState[next.from[0]][next.from[1]];
+    const isPawn = movingPiece && movingPiece.toLowerCase() === 'p';
+    const isPromotion = isPawn && (next.to[0] === 0 || next.to[0] === 7);
+    const promo = isPromotion ? (next.promotion || premoveSettings.promo || 'q') : undefined;
+
+    socket.emit('make_move', {
+      roomId: currentRoom,
+      from: next.fromAlg,
+      to: next.toAlg,
+      promotion: promo,
+      playerToken
+    });
+  } else {
+    // Silent discard per chess.com rules
+    cancelPremoves();
+  }
+}
+
 // ─── Legal Move Generator (UI hints) ──────────────────────────────────────────
-function getPieceMoves(r, c) {
-  const p = boardState[r][c];
+function getPieceMoves(r, c, bState = getActiveBoard()) {
+  if (!bState) return [];
+  const p = bState[r][c];
   if (!p) return [];
   const isWhite = p === p.toUpperCase();
   const moves = [];
@@ -318,16 +590,16 @@ function getPieceMoves(r, c) {
   if (p.toLowerCase() === 'p') {
     const dir = isWhite ? -1 : 1;
     const startRow = isWhite ? 6 : 1;
-    if (r + dir >= 0 && r + dir < 8 && !boardState[r + dir][c]) {
+    if (r + dir >= 0 && r + dir < 8 && !bState[r + dir][c]) {
       moves.push([r + dir, c]);
-      if (r === startRow && !boardState[r + 2 * dir][c]) {
+      if (r === startRow && !bState[r + 2 * dir][c]) {
         moves.push([r + 2 * dir, c]);
       }
     }
     for (const dc of [-1, 1]) {
       const nr = r + dir, nc = c + dc;
       if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-        const target = boardState[nr][nc];
+        const target = bState[nr][nc];
         if (target && (isWhite ? target === target.toLowerCase() : target === target.toUpperCase())) {
           moves.push([nr, nc]);
         }
@@ -349,7 +621,7 @@ function getPieceMoves(r, c) {
     for (const [dr, dc] of deltas) {
       const nr = r + dr, nc = c + dc;
       if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-        const target = boardState[nr][nc];
+        const target = bState[nr][nc];
         if (!target || (isWhite ? target === target.toLowerCase() : target === target.toUpperCase())) {
           moves.push([nr, nc]);
         }
@@ -365,7 +637,7 @@ function getPieceMoves(r, c) {
     for (const [dr, dc] of dirs) {
       let nr = r + dr, nc = c + dc;
       while (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-        const target = boardState[nr][nc];
+        const target = bState[nr][nc];
         if (!target) {
           moves.push([nr, nc]);
         } else {
@@ -385,7 +657,7 @@ function getPieceMoves(r, c) {
     for (const [dr, dc] of dirs) {
       const nr = r + dr, nc = c + dc;
       if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-        const target = boardState[nr][nc];
+        const target = bState[nr][nc];
         if (!target || (isWhite ? target === target.toLowerCase() : target === target.toUpperCase())) {
           moves.push([nr, nc]);
         }
@@ -393,11 +665,11 @@ function getPieceMoves(r, c) {
     }
     // Castling hints
     if (isWhite && r === 7 && c === 4) {
-      if (!boardState[7][5] && !boardState[7][6]) moves.push([7, 6]);
-      if (!boardState[7][3] && !boardState[7][2] && !boardState[7][1]) moves.push([7, 2]);
+      if (!bState[7][5] && !bState[7][6]) moves.push([7, 6]);
+      if (!bState[7][3] && !bState[7][2] && !bState[7][1]) moves.push([7, 2]);
     } else if (!isWhite && r === 0 && c === 4) {
-      if (!boardState[0][5] && !boardState[0][6]) moves.push([0, 6]);
-      if (!boardState[0][3] && !boardState[0][2] && !boardState[0][1]) moves.push([0, 2]);
+      if (!bState[0][5] && !bState[0][6]) moves.push([0, 6]);
+      if (!bState[0][3] && !bState[0][2] && !bState[0][1]) moves.push([0, 2]);
     }
   }
 
@@ -477,8 +749,17 @@ function renderBoard() {
   if (!boardEl || !boardState) return;
   boardEl.innerHTML = '';
 
+  const activeBoard = getActiveBoard();
   const isMyTurn = (myRole !== 'spectator' && myRole === currentTurn && !isGameOver);
-  const legalTargets = (selectedSq && isMyTurn) ? getPieceMoves(selectedSq[0], selectedSq[1]) : [];
+  const canPremove = (myRole !== 'spectator' && myRole !== currentTurn && !isGameOver && premoveSettings.enabled);
+
+  // Calculate move hints
+  let legalTargets = [];
+  if (isMyTurn && selectedSq) {
+    legalTargets = getPieceMoves(selectedSq[0], selectedSq[1], activeBoard);
+  } else if (canPremove && premoveSelectedSq) {
+    legalTargets = getPieceMoves(premoveSelectedSq[0], premoveSelectedSq[1], activeBoard);
+  }
 
   for (let vr = 0; vr < 8; vr++) {
     for (let vc = 0; vc < 8; vc++) {
@@ -491,9 +772,28 @@ function renderBoard() {
       sq.dataset.r = r;
       sq.dataset.c = c;
 
-      // Highlight selected square
+      // Normal turn selected square highlight
       if (selectedSq && selectedSq[0] === r && selectedSq[1] === c) {
         sq.classList.add('sq-selected');
+      }
+
+      // Premove source highlight (currently selected piece or queued moves)
+      if (premoveSelectedSq && premoveSelectedSq[0] === r && premoveSelectedSq[1] === c) {
+        sq.classList.add('sq-premove-from');
+      } else if (premoveQueue.some(pm => pm.from[0] === r && pm.from[1] === c)) {
+        sq.classList.add('sq-premove-from');
+      }
+
+      // Premove destination highlight & badge
+      const pmIndex = premoveQueue.findIndex(pm => pm.to[0] === r && pm.to[1] === c);
+      if (pmIndex !== -1) {
+        sq.classList.add('sq-premove-to');
+        if (premoveQueue.length > 1) {
+          const badge = document.createElement('span');
+          badge.className = 'premove-badge';
+          badge.textContent = `${pmIndex + 1}`;
+          sq.appendChild(badge);
+        }
       }
 
       // Highlight last move played
@@ -501,10 +801,10 @@ function renderBoard() {
         sq.classList.add('sq-last-move');
       }
 
-      const piece = boardState[r][c];
+      const piece = activeBoard[r][c];
 
-      // Highlight King in check
-      if (inCheck && piece && piece.toLowerCase() === 'k') {
+      // Highlight King in check (only in authoritative state)
+      if (inCheck && piece && piece.toLowerCase() === 'k' && !virtualBoardState) {
         const isKingTurn = (currentTurn === 'white' && piece === 'K') || (currentTurn === 'black' && piece === 'k');
         if (isKingTurn) sq.classList.add('sq-check');
       }
@@ -513,6 +813,9 @@ function renderBoard() {
       if (piece) {
         const span = document.createElement('span');
         span.className = piece === piece.toUpperCase() ? 'piece-w' : 'piece-b';
+        if (pmIndex !== -1) {
+          span.classList.add('premove-piece-ghost');
+        }
         span.textContent = SYMBOLS[piece] || piece;
         sq.appendChild(span);
       }
@@ -526,7 +829,7 @@ function renderBoard() {
       }
 
       // Cursor state
-      if (!isMyTurn) {
+      if (!isMyTurn && !canPremove) {
         sq.classList.add('cursor-default');
       }
 
@@ -582,9 +885,23 @@ function animatePieceMove(fromR, fromC, toR, toC, callback) {
 
 function onSquareClick(r, c) {
   if (isGameOver) return;
-  if (myRole !== 'spectator' && myRole !== currentTurn) {
-    showToast(`Wait for your turn (${currentTurn.toUpperCase()}'s turn).`, 'info', 2000);
+
+  const isMyTurn = (myRole !== 'spectator' && myRole === currentTurn);
+
+  // If opponent's turn, handle premove queuing
+  if (!isMyTurn) {
+    if (myRole === 'spectator') return;
+    if (!premoveSettings.enabled) {
+      showToast(`Wait for your turn (${currentTurn.toUpperCase()}'s turn).`, 'info', 1800);
+      return;
+    }
+    handlePremoveClick(r, c);
     return;
+  }
+
+  // Active player turn handling: clear any remaining premoves
+  if (premoveQueue.length > 0) {
+    cancelPremoves();
   }
 
   const piece = boardState[r][c];
@@ -592,7 +909,7 @@ function onSquareClick(r, c) {
 
   // If a piece is selected, check if this is a target square
   if (selectedSq) {
-    const legals = getPieceMoves(selectedSq[0], selectedSq[1]);
+    const legals = getPieceMoves(selectedSq[0], selectedSq[1], boardState);
     const isTarget = legals.some(t => t[0] === r && t[1] === c);
 
     if (isTarget) {
@@ -745,11 +1062,12 @@ socket.on('game_init', (data) => {
 
   currentTurn = data.turn;
   boardState = fenToBoard(data.fen);
+  cancelPremoves();
   clocks = data.clocks || { white: data.timeControl, black: data.timeControl };
   inCheck = data.inCheck;
   isGameOver = data.isGameOver;
 
-  if (myRole === 'black') isFlipped = true;
+  isFlipped = (myRole === 'black');
 
   // Switch screens
   document.getElementById('lobby-screen').classList.add('hidden');
@@ -802,7 +1120,8 @@ function updatePlayersUI(players) {
     oppRoleEl.innerHTML = `<span>${myRole === 'white' ? 'Black' : 'White'}</span> • <span class="${opp.connected ? 'text-emerald-400' : 'text-slate-500'}">${opp.connected ? 'Online' : 'Offline'}</span>`;
   } else {
     oppNameEl.textContent = 'Waiting for opponent...';
-    oppRoleEl.innerHTML = `<button onclick="copyInviteLink()" class="text-indigo-400 hover:text-indigo-300 font-semibold underline cursor-pointer">Share Invite Link</button>`;
+    const myRoleTitle = myRole === 'white' ? 'White' : (myRole === 'black' ? 'Black' : 'Spectator');
+    oppRoleEl.innerHTML = `<span class="text-slate-400 font-medium">You play as ${myRoleTitle}</span> • <button onclick="copyInviteLink()" class="text-indigo-400 hover:text-indigo-300 font-semibold underline cursor-pointer">Share Invite Link</button>`;
   }
   oppAvatarEl.textContent = myRole === 'white' ? '⚫' : '⚪';
 }
@@ -835,11 +1154,23 @@ socket.on('move_made', (data) => {
 
     appendMoveNotation(data.move.san);
     updateStatusMessage();
-    renderBoard();
 
-    // Trigger Game Over Modal if ended
-    if (data.isGameOver && data.gameOverData) {
-      handleGameOverState(data.gameOverData);
+    // Trigger Game Over if ended
+    if (data.isGameOver) {
+      cancelPremoves();
+      renderBoard();
+      if (data.gameOverData) {
+        handleGameOverState(data.gameOverData);
+      }
+      return;
+    }
+
+    // Premove execution on turn arrival
+    if (currentTurn === myRole && premoveQueue.length > 0) {
+      executeNextPremove();
+    } else {
+      virtualBoardState = null;
+      renderBoard();
     }
   });
 });
@@ -857,6 +1188,7 @@ socket.on('game_restarted', (data) => {
   clocks = data.clocks;
   lastMove = null;
   selectedSq = null;
+  cancelPremoves();
   isGameOver = false;
   inCheck = false;
   moveHistory = [];
@@ -869,6 +1201,7 @@ socket.on('game_restarted', (data) => {
 });
 
 socket.on('game_over', (data) => {
+  cancelPremoves();
   isGameOver = true;
   playSound('gameover');
   handleGameOverState(data);
@@ -932,6 +1265,7 @@ socket.on('chat_message', (msg) => {
 });
 
 socket.on('error_message', (msg) => {
+  cancelPremoves();
   showToast(msg, 'error', 4500);
 });
 
@@ -974,6 +1308,7 @@ function createRoom() {
   nameHint.classList.add('hidden');
 
   const tc = parseInt(document.getElementById('time-control-val').value, 10) || 0;
+  const preferredColor = document.getElementById('pvp-color-val')?.value || 'random';
 
   const btn = document.getElementById('create-room-btn');
   btn.disabled = true;
@@ -982,7 +1317,8 @@ function createRoom() {
   socket.emit('join_game', {
     playerName: myName,
     mode: 'pvp',
-    timeControl: tc
+    timeControl: tc,
+    preferredColor
   });
 
   setTimeout(() => {
@@ -1018,11 +1354,13 @@ function joinRoomByCode() {
 function startAiGame() {
   const nameInput = document.getElementById('player-name-input');
   myName = nameInput.value.trim() || 'Player';
+  const preferredColor = document.getElementById('ai-color-val')?.value || 'random';
 
   socket.emit('join_game', {
     playerName: myName,
     mode: 'ai',
-    timeControl: 0
+    timeControl: 0,
+    preferredColor
   });
 }
 
@@ -1164,12 +1502,23 @@ function appendMoveNotation(san) {
 
 // ─── Keyboard Accessibility & Initialization ──────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
+  loadPremoveSettings();
+
   const params = new URLSearchParams(window.location.search);
   const roomParam = params.get('room');
   if (roomParam) {
     const input = document.getElementById('join-room-input');
     if (input) input.value = roomParam.toUpperCase();
   }
+
+  // Right-click anywhere on the chessboard cancels queued premoves (chess.com-style)
+  document.getElementById('board-frame')?.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (premoveQueue.length > 0 || premoveSelectedSq) {
+      cancelPremoves();
+      showToast('Premove cancelled.', 'info', 1200);
+    }
+  });
 
   // Clear validation hints on input
   document.getElementById('player-name-input')?.addEventListener('input', () => {
@@ -1182,6 +1531,9 @@ window.addEventListener('DOMContentLoaded', () => {
   // Global keyboard shortcuts
   window.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (e.key === 'Escape') {
+      closeSettingsModal();
+    }
     if (e.key === 'f' || e.key === 'F') {
       flipBoard();
     }

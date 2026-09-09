@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Chess Live: Real-Time Multiplayer</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="alternate icon" href="/favicon.ico">
   <link rel="stylesheet" href="style.css">
   <script src="/socket.io/socket.io.js"></script>
 </head>
@@ -29,7 +31,7 @@
         </div>
       </div>
 
-      <!-- Network / Room Pill -->
+      <!-- Network / Room Pill / Settings -->
       <div class="flex items-center gap-2">
         <div id="connection-status" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
           <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -37,6 +39,9 @@
         </div>
         <button id="nav-share-btn" onclick="copyInviteLink()" class="hidden px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-xs font-semibold text-white transition flex items-center gap-1 shadow-sm cursor-pointer">
           <span>📋</span> <span class="hidden sm:inline">Copy</span> Invite
+        </button>
+        <button id="settings-btn" onclick="openSettingsModal()" title="Game & Premove Settings" class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 hover:text-white transition flex items-center justify-center cursor-pointer border border-slate-700/60 shadow-sm text-xs">
+          ⚙️
         </button>
       </div>
     </div>
@@ -91,6 +96,26 @@
           <input type="hidden" id="time-control-val" value="600">
         </div>
 
+        <!-- Color Selection for Host (chess.com-style) -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-2">Play as</label>
+          <div class="grid grid-cols-3 gap-2" id="pvp-color-picker">
+            <button type="button" onclick="selectHostColor('white', this, 'pvp')" class="color-btn p-2 rounded-xl border border-slate-800 bg-slate-950 text-center hover:border-slate-700 transition cursor-pointer flex flex-col items-center justify-center gap-1">
+              <span class="text-base">⚪</span>
+              <span class="text-xs font-bold text-slate-300">White</span>
+            </button>
+            <button type="button" onclick="selectHostColor('random', this, 'pvp')" class="color-btn active p-2 rounded-xl border border-indigo-500/50 bg-indigo-600/20 text-center transition cursor-pointer flex flex-col items-center justify-center gap-1">
+              <span class="text-base">🔀</span>
+              <span class="text-xs font-bold text-indigo-300">Random</span>
+            </button>
+            <button type="button" onclick="selectHostColor('black', this, 'pvp')" class="color-btn p-2 rounded-xl border border-slate-800 bg-slate-950 text-center hover:border-slate-700 transition cursor-pointer flex flex-col items-center justify-center gap-1">
+              <span class="text-base">⚫</span>
+              <span class="text-xs font-bold text-slate-300">Black</span>
+            </button>
+          </div>
+          <input type="hidden" id="pvp-color-val" value="random">
+        </div>
+
         <button id="create-room-btn" onclick="createRoom()" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 active:scale-[0.99] font-bold text-sm text-white shadow-lg shadow-indigo-600/25 transition cursor-pointer flex items-center justify-center gap-2">
           <span>⚔️</span> <span>Create New Game Room</span>
         </button>
@@ -117,6 +142,27 @@
         <div class="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800/80 text-xs text-slate-300 leading-relaxed">
           Play a single-player match against the built-in Minimax AI engine with material-positional evaluation directly in your browser.
         </div>
+
+        <!-- Color Selection for AI Match -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-2">Play as</label>
+          <div class="grid grid-cols-3 gap-2" id="ai-color-picker">
+            <button type="button" onclick="selectHostColor('white', this, 'ai')" class="color-btn p-2 rounded-xl border border-slate-800 bg-slate-950 text-center hover:border-slate-700 transition cursor-pointer flex flex-col items-center justify-center gap-1">
+              <span class="text-base">⚪</span>
+              <span class="text-xs font-bold text-slate-300">White</span>
+            </button>
+            <button type="button" onclick="selectHostColor('random', this, 'ai')" class="color-btn active p-2 rounded-xl border border-emerald-500/50 bg-emerald-600/20 text-center transition cursor-pointer flex flex-col items-center justify-center gap-1">
+              <span class="text-base">🔀</span>
+              <span class="text-xs font-bold text-emerald-300">Random</span>
+            </button>
+            <button type="button" onclick="selectHostColor('black', this, 'ai')" class="color-btn p-2 rounded-xl border border-slate-800 bg-slate-950 text-center hover:border-slate-700 transition cursor-pointer flex flex-col items-center justify-center gap-1">
+              <span class="text-base">⚫</span>
+              <span class="text-xs font-bold text-slate-300">Black</span>
+            </button>
+          </div>
+          <input type="hidden" id="ai-color-val" value="random">
+        </div>
+
         <button onclick="startAiGame()" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 active:scale-[0.99] font-bold text-sm text-white shadow-lg shadow-emerald-600/25 transition cursor-pointer flex items-center justify-center gap-2">
           <span>🤖</span> <span>Start Match vs AI</span>
         </button>
@@ -271,6 +317,66 @@
           <button id="modal-cancel-btn" class="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 transition cursor-pointer">Cancel</button>
           <button id="modal-confirm-btn" class="flex-1 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white transition cursor-pointer">Confirm</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal (Premoves & Preferences) -->
+  <div id="settings-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm modal-backdrop" role="dialog" aria-modal="true">
+    <div class="bg-slate-900 border border-slate-700/80 rounded-2xl p-6 max-w-sm w-full shadow-2xl modal-content">
+      <div class="flex items-center justify-between pb-3 mb-4 border-b border-slate-800">
+        <div class="flex items-center gap-2">
+          <span class="text-base">⚙️</span>
+          <h3 class="text-sm font-bold text-white tracking-tight">Game Settings</h3>
+        </div>
+        <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-white text-lg leading-none cursor-pointer">&times;</button>
+      </div>
+
+      <div class="space-y-4 text-xs">
+        <!-- Enable Premoves Toggle -->
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="font-semibold text-slate-200">Enable Premoves</div>
+            <div class="text-[11px] text-slate-400">Queue moves during opponent's turn</div>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" id="setting-premove-enabled" class="sr-only peer" checked>
+            <div class="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+          </label>
+        </div>
+
+        <!-- Premove Queue Mode -->
+        <div class="pt-2 border-t border-slate-800/80">
+          <div class="font-semibold text-slate-200 mb-1.5">Premove Mode</div>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="flex items-center gap-2 p-2 rounded-xl bg-slate-950 border border-slate-800 cursor-pointer hover:border-slate-700">
+              <input type="radio" name="premove-mode" value="single" class="text-indigo-600 focus:ring-indigo-500">
+              <span class="text-[11px] text-slate-300 font-medium">Single move</span>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-xl bg-slate-950 border border-slate-800 cursor-pointer hover:border-slate-700">
+              <input type="radio" name="premove-mode" value="unlimited" checked class="text-indigo-600 focus:ring-indigo-500">
+              <span class="text-[11px] text-slate-300 font-medium">Multiple</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Auto-Promotion Selection -->
+        <div class="pt-2 border-t border-slate-800/80">
+          <label for="setting-default-promo" class="block font-semibold text-slate-200 mb-1">Default Premove Promotion</label>
+          <p class="text-[10px] text-slate-400 mb-1.5">Premoves auto-promote without opening dialog.</p>
+          <select id="setting-default-promo" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500">
+            <option value="q">Queen (♕) - Default</option>
+            <option value="r">Rook (♖)</option>
+            <option value="b">Bishop (♗)</option>
+            <option value="n">Knight (♘)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="mt-6 pt-3 border-t border-slate-800 flex justify-end">
+        <button onclick="saveSettingsModal()" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-xs font-bold text-white transition cursor-pointer shadow-md">
+          Done
+        </button>
       </div>
     </div>
   </div>

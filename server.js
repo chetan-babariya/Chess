@@ -227,6 +227,57 @@ function minimax(chess, depth, alpha, beta, isMaximizing) {
   }
 }
 
+function triggerAiMove(room, delayMs = 350) {
+  if (!room || room.mode !== 'ai' || room.chess.isGameOver()) return;
+  const currentTurn = room.chess.turn() === 'w' ? 'white' : 'black';
+  const aiPlayer = room.players[currentTurn];
+  if (!aiPlayer || aiPlayer.id !== 'ai-bot') return;
+
+  const isMaximizing = (currentTurn === 'white');
+  setTimeout(() => {
+    try {
+      if (!rooms.has(room.id)) return;
+      if (room.chess.isGameOver()) return;
+      const turnNow = room.chess.turn() === 'w' ? 'white' : 'black';
+      if (room.players[turnNow]?.id !== 'ai-bot') return;
+
+      const aiResult = minimax(room.chess, 2, -Infinity, Infinity, isMaximizing);
+      if (aiResult.move) {
+        const aiMove = room.chess.move(aiResult.move);
+        const afterAiTurn = room.chess.turn() === 'w' ? 'white' : 'black';
+        const aiInCheck = room.chess.inCheck();
+        const aiIsGameOver = room.chess.isGameOver();
+
+        let aiGameOverData = null;
+        if (aiIsGameOver) {
+          if (room.timerInterval) clearInterval(room.timerInterval);
+          let aiWinner = null;
+          let aiReason = 'draw';
+          if (room.chess.isCheckmate()) {
+            aiWinner = currentTurn === 'white' ? 'White (AI)' : 'Black (AI)';
+            aiReason = 'checkmate';
+          }
+          aiGameOverData = { winner: aiWinner, reason: aiReason };
+          scheduleRoomCleanup(room);
+        }
+
+        io.to(room.id).emit('move_made', {
+          move: aiMove,
+          fen: room.chess.fen(),
+          pgn: room.chess.pgn(),
+          turn: afterAiTurn,
+          inCheck: aiInCheck,
+          isGameOver: aiIsGameOver,
+          gameOverData: aiGameOverData,
+          clocks: room.clocks
+        });
+      }
+    } catch (aiErr) {
+      console.error(`AI move error in room ${room.id}:`, aiErr.message);
+    }
+  }, delayMs);
+}
+
 // ─── Timer Management ─────────────────────────────────────────────────────────
 function startClock(room) {
   if (room.timerInterval) clearInterval(room.timerInterval);
@@ -290,6 +341,14 @@ app.get('/api/info', (req, res) => {
 // Health check endpoint (for Docker HEALTHCHECK, load balancers, etc.)
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', uptime: process.uptime() });
+});
+
+// Favicon endpoints
+app.get('/favicon.ico', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'favicon.ico'));
+});
+app.get('/favicon.svg', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'favicon.svg'));
 });
 
 // ─── Socket.io Event Handlers ─────────────────────────────────────────────────
@@ -358,15 +417,30 @@ io.on('connection', (socket) => {
     const rawName = (typeof playerName === 'string' ? playerName : '').trim().substring(0, 24);
     const cleanName = sanitize(rawName || `Player-${socket.id.substring(0, 4)}`);
 
+    // Determine host color if room is newly created
+    let hostColor = 'white';
+    if (preferredColor === 'black') {
+      hostColor = 'black';
+    } else if (preferredColor === 'white') {
+      hostColor = 'white';
+    } else {
+      // 'random' or unspecified -> server rolls 50/50
+      hostColor = Math.random() < 0.5 ? 'white' : 'black';
+    }
+
     if (room.mode === 'ai') {
-      // Fix #3: Don't overwrite existing player in AI room
-      if (room.players.white && room.players.white.id !== socket.id) {
+      // Check if human player already exists in this AI room
+      const existingUser = (room.players.white && room.players.white.id !== 'ai-bot') ? room.players.white
+                         : (room.players.black && room.players.black.id !== 'ai-bot') ? room.players.black : null;
+      const existingUserColor = (existingUser === room.players.white) ? 'white' : 'black';
+
+      if (existingUser && existingUser.id !== socket.id) {
         // Check reconnect by token
-        if (room.players.white.token === playerToken) {
-          room.players.white.id = socket.id;
-          room.players.white.connected = true;
-          role = 'white';
-          token = room.players.white.token;
+        if (existingUser.token === playerToken) {
+          existingUser.id = socket.id;
+          existingUser.connected = true;
+          role = existingUserColor;
+          token = existingUser.token;
         } else {
           // Someone else's AI game — join as spectator
           role = 'spectator';
@@ -374,10 +448,16 @@ io.on('connection', (socket) => {
           room.spectators.push({ id: socket.id, name: cleanName });
         }
       } else {
-        // New AI game or same socket reconnecting
-        room.players.white = { id: socket.id, token, name: cleanName, connected: true };
-        room.players.black = { id: 'ai-bot', token: 'ai-token', name: 'Antigravity AI (Bot)', connected: true };
-        role = 'white';
+        // New AI game: seat human player based on hostColor
+        if (hostColor === 'black') {
+          room.players.white = { id: 'ai-bot', token: 'ai-token', name: 'Antigravity AI (Bot)', connected: true };
+          room.players.black = { id: socket.id, token, name: cleanName, connected: true };
+          role = 'black';
+        } else {
+          room.players.white = { id: socket.id, token, name: cleanName, connected: true };
+          room.players.black = { id: 'ai-bot', token: 'ai-token', name: 'Antigravity AI (Bot)', connected: true };
+          role = 'white';
+        }
       }
     } else {
       // PvP mode — reconnect by token first
@@ -391,19 +471,30 @@ io.on('connection', (socket) => {
         room.players.black.connected = true;
         role = 'black';
         token = room.players.black.token;
-      } else if (!room.players.white && preferredColor !== 'black') {
-        room.players.white = { id: socket.id, token, name: cleanName, connected: true };
-        role = 'white';
-      } else if (!room.players.black) {
-        room.players.black = { id: socket.id, token, name: cleanName, connected: true };
-        role = 'black';
-      } else if (!room.players.white) {
-        room.players.white = { id: socket.id, token, name: cleanName, connected: true };
-        role = 'white';
+      } else if (isNewRoom) {
+        // Room creator assigned according to hostColor
+        if (hostColor === 'black') {
+          room.players.black = { id: socket.id, token, name: cleanName, connected: true };
+          room.players.white = null;
+          role = 'black';
+        } else {
+          room.players.white = { id: socket.id, token, name: cleanName, connected: true };
+          room.players.black = null;
+          role = 'white';
+        }
       } else {
-        role = 'spectator';
-        token = null;
-        room.spectators.push({ id: socket.id, name: cleanName });
+        // Second player takes the remaining available seat
+        if (!room.players.white) {
+          room.players.white = { id: socket.id, token, name: cleanName, connected: true };
+          role = 'white';
+        } else if (!room.players.black) {
+          room.players.black = { id: socket.id, token, name: cleanName, connected: true };
+          role = 'black';
+        } else {
+          role = 'spectator';
+          token = null;
+          room.spectators.push({ id: socket.id, name: cleanName });
+        }
       }
     }
 
@@ -430,6 +521,11 @@ io.on('connection', (socket) => {
       messages: room.messages.slice(-30)
     });
 
+    // If AI is playing as White and it is move 1, trigger opening move
+    if (room.mode === 'ai' && room.players.white?.id === 'ai-bot' && room.chess.history().length === 0) {
+      triggerAiMove(room, 500);
+    }
+
     // Notify entire room of player changes
     io.to(room.id).emit('players_update', {
       players: publicPlayers(room),
@@ -454,20 +550,13 @@ io.on('connection', (socket) => {
     const currentTurn = room.chess.turn() === 'w' ? 'white' : 'black';
     const player = room.players[currentTurn];
 
-    // Fix #2: Unified auth for BOTH PvP and AI modes
-    // In AI mode, only the white (human) player can make moves, and only on white's turn
-    if (room.mode === 'ai') {
-      if (currentTurn !== 'white') {
-        return socket.emit('error_message', 'Wait for AI to move.');
-      }
-      if (!room.players.white || room.players.white.token !== playerToken || room.players.white.id !== socket.id) {
-        return socket.emit('error_message', 'Unauthorized: Not your game.');
-      }
-    } else {
-      // PvP auth
-      if (!player || player.token !== playerToken || player.id !== socket.id) {
-        return socket.emit('error_message', 'Unauthorized: Not your turn or invalid player token!');
-      }
+    // Unified auth for BOTH PvP and AI modes
+    // Check if it is AI's turn
+    if (player && player.id === 'ai-bot') {
+      return socket.emit('error_message', 'Wait for AI to move.');
+    }
+    if (!player || player.token !== playerToken || player.id !== socket.id) {
+      return socket.emit('error_message', 'Unauthorized: Not your turn or invalid player token!');
     }
 
     try {
@@ -516,45 +605,8 @@ io.on('connection', (socket) => {
       });
 
       // AI Response Trigger
-      if (room.mode === 'ai' && nextTurn === 'black' && !isGameOver) {
-        setTimeout(() => {
-          try {
-            if (!rooms.has(roomId)) return; // room may have been cleaned up
-            const aiResult = minimax(room.chess, 2, -Infinity, Infinity, false);
-            if (aiResult.move) {
-              const aiMove = room.chess.move(aiResult.move);
-              const afterAiTurn = room.chess.turn() === 'w' ? 'white' : 'black';
-              const aiInCheck = room.chess.inCheck();
-              const aiIsGameOver = room.chess.isGameOver();
-
-              let aiGameOverData = null;
-              if (aiIsGameOver) {
-                if (room.timerInterval) clearInterval(room.timerInterval);
-                let aiWinner = null;
-                let aiReason = 'draw';
-                if (room.chess.isCheckmate()) {
-                  aiWinner = 'Black (AI)';
-                  aiReason = 'checkmate';
-                }
-                aiGameOverData = { winner: aiWinner, reason: aiReason };
-                scheduleRoomCleanup(room);
-              }
-
-              io.to(room.id).emit('move_made', {
-                move: aiMove,
-                fen: room.chess.fen(),
-                pgn: room.chess.pgn(),
-                turn: afterAiTurn,
-                inCheck: aiInCheck,
-                isGameOver: aiIsGameOver,
-                gameOverData: aiGameOverData,
-                clocks: room.clocks
-              });
-            }
-          } catch (aiErr) {
-            console.error(`AI move error in room ${roomId}:`, aiErr.message);
-          }
-        }, 350);
+      if (room.mode === 'ai' && !isGameOver) {
+        triggerAiMove(room, 350);
       }
     } catch (err) {
       socket.emit('error_message', `Invalid move: ${err.message}`);
@@ -618,6 +670,11 @@ io.on('connection', (socket) => {
       turn: 'white',
       clocks: room.clocks
     });
+
+    // If AI is playing as White, trigger opening move on restart
+    if (room.mode === 'ai' && room.players.white?.id === 'ai-bot') {
+      triggerAiMove(room, 500);
+    }
   });
 
   // ── chat_message ────────────────────────────────────────────────────────────

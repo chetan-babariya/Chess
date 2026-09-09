@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="knightGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#818cf8"/>
+      <stop offset="50%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#4338ca"/>
+    </linearGradient>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#bgGrad)" stroke="#334155" stroke-width="2"/>
+  <path d="M22 48h20v4H22zM24 44h16c1-2 2-5 1-9-1-2-2-4-2-6 0-3 2-6 2-9 0-4-3-7-7-7-2 0-4 1-5 2-1-2-3-3-5-3-3 0-6 2-7 5-1 2-1 5 1 8 1 2 2 4 2 6 0 3-1 6-2 9h6z" fill="url(#knightGrad)"/>
+  <circle cx="26" cy="24" r="2" fill="#e0e7ff"/>
+  <path d="M30 44h4v-5h-4z" fill="#a5b4fc" opacity="0.6"/>
+</svg>
