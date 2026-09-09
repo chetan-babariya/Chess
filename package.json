@@ -1,0 +1,20 @@
+{
+  "name": "chess-live-app",
+  "version": "1.0.0",
+  "description": "Production-ready real-time multiplayer chess game for local LAN and cloud deployment",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": ["chess", "multiplayer", "socket.io", "express", "lan"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "chess.js": "^1.0.0-beta.6",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
+}

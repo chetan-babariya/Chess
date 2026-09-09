@@ -1,0 +1,88 @@
+/* Chessboard Square Dimensions */
+.chess-square {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  user-select: none;
+  position: relative;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+
+@media (min-width: 640px) {
+  .chess-square {
+    width: 52px;
+    height: 52px;
+    font-size: 34px;
+  }
+}
+
+/* Board Themes (Warm Wood / Luxury Tournament Theme) */
+.sq-light {
+  background-color: #ebecd0;
+}
+.sq-dark {
+  background-color: #739552;
+}
+
+/* Highlighting States */
+.sq-selected {
+  background-color: #baca44 !important;
+}
+.sq-last-move {
+  background-color: rgba(247, 247, 105, 0.5) !important;
+}
+.sq-check {
+  background-color: #eb4d4b !important;
+}
+
+/* Legal Move Hints */
+.move-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.22);
+  pointer-events: none;
+  z-index: 10;
+}
+
+.capture-ring {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 4px solid rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* Crisp Pieces Styling */
+.piece-w {
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 1.5px #000;
+  filter: drop-shadow(0 2px 2px rgba(0,0,0,0.3));
+}
+
+.piece-b {
+  color: #171717;
+  text-shadow: 0 1px 1px rgba(255,255,255,0.25);
+  filter: drop-shadow(0 2px 3px rgba(0,0,0,0.5));
+}
+
+/* Scrollbar customization */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0f172a;
+}
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
