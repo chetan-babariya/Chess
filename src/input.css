@@ -97,33 +97,42 @@
 
 /* ─── Move Hints ────────────────────────────────────────────────────────────── */
 .move-dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   width: calc(var(--square-size) * 0.32);
   height: calc(var(--square-size) * 0.32);
   border-radius: 50%;
   background: rgba(15, 23, 42, 0.3);
   pointer-events: none;
   z-index: 10;
-  transition: transform 0.15s ease;
+  transition: transform 0.15s ease, background-color 0.15s ease;
 }
 
 .chess-square:hover .move-dot {
-  transform: scale(1.25);
+  transform: translate(-50%, -50%) scale(1.25);
   background: rgba(15, 23, 42, 0.45);
 }
 
 .capture-ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   width: calc(var(--square-size) * 0.88);
   height: calc(var(--square-size) * 0.88);
   border-radius: 50%;
-  border: calc(var(--square-size) * 0.08) solid rgba(15, 23, 42, 0.38);
+  border: calc(var(--square-size) * 0.08) solid rgba(15, 23, 42, 0.4);
+  box-sizing: border-box;
   pointer-events: none;
   z-index: 10;
   transition: transform 0.15s ease, border-color 0.15s ease;
 }
 
 .chess-square:hover .capture-ring {
-  transform: scale(1.06);
-  border-color: rgba(239, 68, 68, 0.65);
+  transform: translate(-50%, -50%) scale(1.06);
+  border-color: rgba(239, 68, 68, 0.7);
 }
 
 /* ─── Chess Pieces ──────────────────────────────────────────────────────────── */
