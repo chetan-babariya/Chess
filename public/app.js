@@ -62,6 +62,8 @@ let isGameOver = false;
 let moveHistory = [];
 let clocks = { white: 0, black: 0 };
 let capturedPieces = { white: [], black: [] };
+let currentFen = ''; // Track current FEN for en passant detection
+let pendingPromotion = null; // { from, to } awaiting user choice
 
 // FEN Parser
 function fenToBoard(fen) {
@@ -100,7 +102,16 @@ function formatClock(seconds) {
   return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 }
 
+// Get en passant target square from FEN
+function getEnPassantTarget() {
+  if (!currentFen) return null;
+  const parts = currentFen.split(' ');
+  if (parts.length < 4 || parts[3] === '-') return null;
+  return algToSquare(parts[3]); // [rank, file]
+}
+
 // Simple Client Legal Move Generator for Instant UI Feedback
+// NOTE: This is for UI hints only. The server validates authoritatively via chess.js.
 function getPieceMoves(r, c) {
   const p = boardState[r][c];
   if (!p) return [];
@@ -117,6 +128,7 @@ function getPieceMoves(r, c) {
         moves.push([r + 2 * dir, c]);
       }
     }
+    // Regular captures
     for (const dc of [-1, 1]) {
       const nr = r + dir, nc = c + dc;
       if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
@@ -124,6 +136,15 @@ function getPieceMoves(r, c) {
         if (target && (isWhite ? target === target.toLowerCase() : target === target.toUpperCase())) {
           moves.push([nr, nc]);
         }
+      }
+    }
+    // Fix #11: En passant captures
+    const epTarget = getEnPassantTarget();
+    if (epTarget) {
+      const [epR, epC] = epTarget;
+      // The en passant target square is the square the pawn moves TO (behind the captured pawn)
+      if (epR === r + dir && Math.abs(epC - c) === 1) {
+        moves.push([epR, epC]);
       }
     }
   }
@@ -189,7 +210,75 @@ function getPieceMoves(r, c) {
   return moves;
 }
 
-// Render Board
+// ─── Promotion Modal (Fix #14) ────────────────────────────────────────────────
+function showPromotionModal(fromAlg, toAlg, isWhitePiece) {
+  pendingPromotion = { from: fromAlg, to: toAlg };
+
+  // Create modal overlay
+  let overlay = document.getElementById('promo-overlay');
+  if (overlay) overlay.remove();
+
+  overlay = document.createElement('div');
+  overlay.id = 'promo-overlay';
+  overlay.className = 'fixed inset-0 z-50 bg-black/60 flex items-center justify-center backdrop-blur-sm';
+
+  const pieces = [
+    { type: 'q', symbol: isWhitePiece ? '♕' : '♛', label: 'Queen' },
+    { type: 'r', symbol: isWhitePiece ? '♖' : '♜', label: 'Rook' },
+    { type: 'b', symbol: isWhitePiece ? '♗' : '♝', label: 'Bishop' },
+    { type: 'n', symbol: isWhitePiece ? '♘' : '♞', label: 'Knight' },
+  ];
+
+  const box = document.createElement('div');
+  box.className = 'bg-slate-900 border border-slate-700 rounded-2xl p-5 shadow-2xl text-center';
+  box.innerHTML = `
+    <div class="text-sm font-bold text-slate-200 mb-3">Promote Pawn To:</div>
+    <div class="flex gap-3 justify-center"></div>
+  `;
+
+  const row = box.querySelector('div:last-child');
+  for (const p of pieces) {
+    const btn = document.createElement('button');
+    btn.className = 'w-14 h-14 rounded-xl bg-slate-800 hover:bg-indigo-600 border border-slate-700 hover:border-indigo-500 flex items-center justify-center text-3xl transition cursor-pointer ' + (isWhitePiece ? 'piece-w' : 'piece-b');
+    btn.textContent = p.symbol;
+    btn.title = p.label;
+    btn.onclick = () => {
+      overlay.remove();
+      sendMoveWithPromotion(pendingPromotion.from, pendingPromotion.to, p.type);
+      pendingPromotion = null;
+    };
+    row.appendChild(btn);
+  }
+
+  // Cancel button
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'mt-3 text-xs text-slate-400 hover:text-white transition';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.onclick = () => {
+    overlay.remove();
+    pendingPromotion = null;
+    selectedSq = null;
+    renderBoard();
+  };
+  box.appendChild(cancelBtn);
+
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
+function sendMoveWithPromotion(fromAlg, toAlg, promotion) {
+  socket.emit('make_move', {
+    roomId: currentRoom,
+    from: fromAlg,
+    to: toAlg,
+    promotion,
+    playerToken
+  });
+  selectedSq = null;
+  renderBoard();
+}
+
+// ─── Render Board ─────────────────────────────────────────────────────────────
 function renderBoard() {
   const boardEl = document.getElementById('board');
   if (!boardEl || !boardState) return;
@@ -265,17 +354,19 @@ function onSquareClick(r, c) {
       const fromAlg = squareToAlg(selectedSq[0], selectedSq[1]);
       const toAlg = squareToAlg(r, c);
 
-      // Pawn promotion check
-      let promotion = undefined;
+      // Fix #14: Pawn promotion — show picker for underpromotion
       const movedPiece = boardState[selectedSq[0]][selectedSq[1]];
-      if (movedPiece === 'P' && r === 0) promotion = 'q';
-      if (movedPiece === 'p' && r === 7) promotion = 'q';
+      const isPromotion = (movedPiece === 'P' && r === 0) || (movedPiece === 'p' && r === 7);
+
+      if (isPromotion) {
+        showPromotionModal(fromAlg, toAlg, movedPiece === 'P');
+        return;
+      }
 
       socket.emit('make_move', {
         roomId: currentRoom,
         from: fromAlg,
         to: toAlg,
-        promotion,
         playerToken
       });
 
@@ -318,9 +409,19 @@ function updateStatusMessage() {
   }
 }
 
-// Socket Event Handlers
+// ─── Socket Event Handlers ────────────────────────────────────────────────────
 socket.on('connect', () => {
   document.getElementById('conn-text').textContent = 'Online';
+
+  // Fix #13: Auto-resume on reconnect — if we have a stored room + token, rejoin
+  if (currentRoom && playerToken) {
+    socket.emit('join_game', {
+      roomId: currentRoom,
+      playerName: myName || 'Player',
+      mode: 'pvp',
+      playerToken
+    });
+  }
 });
 
 socket.on('disconnect', () => {
@@ -331,8 +432,10 @@ socket.on('game_init', (data) => {
   currentRoom = data.roomId;
   myRole = data.role;
   playerToken = data.playerToken;
+  currentFen = data.fen;
   if (playerToken) {
     sessionStorage.setItem('chess_player_token_' + currentRoom, playerToken);
+    sessionStorage.setItem('chess_room_name_' + currentRoom, myName);
   }
   currentTurn = data.turn;
   boardState = fenToBoard(data.fen);
@@ -355,6 +458,16 @@ socket.on('game_init', (data) => {
   updatePlayersUI(data.players);
   updateStatusMessage();
   renderBoard();
+
+  // Replay move history for notation panel
+  moveHistory = [];
+  const tbody = document.getElementById('moves-tbody');
+  tbody.innerHTML = '';
+  if (data.history && data.history.length > 0) {
+    for (const move of data.history) {
+      appendMoveNotation(move.san);
+    }
+  }
 
   // Load chat messages
   const chatBox = document.getElementById('chat-messages');
@@ -387,6 +500,7 @@ function updatePlayersUI(players) {
 
 socket.on('move_made', (data) => {
   boardState = fenToBoard(data.fen);
+  currentFen = data.fen; // Track FEN for en passant
   currentTurn = data.turn;
   inCheck = data.inCheck;
   isGameOver = data.isGameOver;
@@ -428,6 +542,7 @@ socket.on('clock_update', (newClocks) => {
 
 socket.on('game_restarted', (data) => {
   boardState = fenToBoard(data.fen);
+  currentFen = data.fen;
   currentTurn = data.turn;
   clocks = data.clocks;
   lastMove = null;
@@ -449,6 +564,13 @@ socket.on('game_over', (data) => {
   alert(data.message || `Game Over!`);
 });
 
+// Fix #12: Handle restart request notification from opponent
+socket.on('restart_requested', (data) => {
+  if (confirm(data.message || 'Opponent wants to restart. Do you agree?')) {
+    socket.emit('restart_game', { roomId: currentRoom, playerToken });
+  }
+});
+
 socket.on('chat_message', (msg) => {
   appendChatMessage(msg);
 });
@@ -457,7 +579,7 @@ socket.on('error_message', (msg) => {
   alert(msg);
 });
 
-// UI Actions
+// ─── UI Actions ───────────────────────────────────────────────────────────────
 function switchLobbyTab(tab) {
   const pvpTab = document.getElementById('tab-content-pvp');
   const aiTab = document.getElementById('tab-content-ai');
@@ -543,10 +665,10 @@ function sendChat(e) {
   const input = document.getElementById('chat-input');
   const text = input.value.trim();
   if (!text) return;
+  // Fix #5: Don't send sender from client — server derives it from socket state
   socket.emit('chat_message', {
     roomId: currentRoom,
-    text,
-    sender: myName || 'Player'
+    text
   });
   input.value = '';
 }
@@ -592,7 +714,7 @@ function appendMoveNotation(san) {
   scrollEl.scrollTop = scrollEl.scrollHeight;
 }
 
-// Auto-populate URL room parameter & LAN IP hint
+// ─── Auto-populate URL room parameter ─────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
   const params = new URLSearchParams(window.location.search);
   const roomParam = params.get('room');
@@ -601,11 +723,9 @@ window.addEventListener('DOMContentLoaded', () => {
     if (input) input.value = roomParam.toUpperCase();
   }
 
+  // Fix #9: /api/info no longer sends IPs, so we don't try to display them
+  // The LAN IP hint is shown at server startup in console only
   fetch('/api/info').then(res => res.json()).then(data => {
-    if (data.localIps && data.localIps.length > 0) {
-      const wifiIp = data.localIps.find(i => i.name.toLowerCase().includes('wi-fi')) || data.localIps[0];
-      const hint = document.getElementById('lan-ip-hint');
-      if (hint) hint.textContent = `http://${wifiIp.ip}:${window.location.port || 3000}`;
-    }
+    // Just confirm we're connected
   }).catch(() => {});
 });
