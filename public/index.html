@@ -278,16 +278,21 @@
         </div>
 
         <!-- Game Controls -->
-        <div class="grid grid-cols-3 gap-2">
-          <button onclick="flipBoard()" class="py-2.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 active:scale-95 text-xs font-semibold text-slate-200 transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm" title="Flip the board view">
+        <div id="game-controls-container" class="flex gap-2">
+          <button id="flip-btn" onclick="flipBoard()" class="flex-1 py-2.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 active:scale-95 text-xs font-semibold text-slate-200 transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm" title="Flip the board view">
             <span>🔄</span> <span>Flip</span>
           </button>
-          <button onclick="requestRestart()" class="py-2.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 active:scale-95 text-xs font-semibold text-slate-200 transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm" title="Request to start a new match">
-            <span>🔁</span> <span>Restart</span>
-          </button>
-          <button onclick="confirmResign()" class="py-2.5 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/40 active:scale-95 text-xs font-semibold text-rose-300 transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm" title="Resign this match">
-            <span>🏳️</span> <span>Resign</span>
-          </button>
+          <div id="player-controls" class="flex-[2] flex gap-2">
+            <button id="offer-draw-btn" onclick="offerDraw()" class="flex-1 py-2.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 active:scale-95 text-xs font-semibold text-slate-200 transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm" title="Offer a draw to your opponent">
+              <span>🤝</span> <span>Draw</span>
+            </button>
+            <button id="resign-btn" onclick="confirmResign()" class="flex-1 py-2.5 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/40 active:scale-95 text-xs font-semibold text-rose-300 transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm" title="Resign this match">
+              <span>🏳️</span> <span>Resign</span>
+            </button>
+            <button id="rematch-btn" onclick="requestRematch()" class="hidden flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-xs font-bold text-white transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm" title="Request a rematch">
+              <span>🔁</span> <span>Rematch</span>
+            </button>
+          </div>
         </div>
 
       </div>

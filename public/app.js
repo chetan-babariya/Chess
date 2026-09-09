@@ -222,11 +222,16 @@ function showModal({ title, message, icon = 'ℹ️', confirmText = 'Confirm', c
   msgEl.textContent = message;
   iconEl.textContent = icon;
 
-  confirmBtn.textContent = confirmText;
-  if (destructive) {
-    confirmBtn.className = 'flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 active:scale-95 text-xs font-bold text-white transition cursor-pointer shadow-lg shadow-rose-600/25';
+  if (confirmText) {
+    confirmBtn.classList.remove('hidden');
+    confirmBtn.textContent = confirmText;
+    if (destructive) {
+      confirmBtn.className = 'flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 active:scale-95 text-xs font-bold text-white transition cursor-pointer shadow-lg shadow-rose-600/25';
+    } else {
+      confirmBtn.className = 'flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-xs font-bold text-white transition cursor-pointer shadow-lg shadow-indigo-600/25';
+    }
   } else {
-    confirmBtn.className = 'flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-xs font-bold text-white transition cursor-pointer shadow-lg shadow-indigo-600/25';
+    confirmBtn.classList.add('hidden');
   }
 
   if (cancelText) {
@@ -237,7 +242,11 @@ function showModal({ title, message, icon = 'ℹ️', confirmText = 'Confirm', c
   }
 
   container.classList.remove('hidden');
-  confirmBtn.focus();
+  if (confirmText) {
+    confirmBtn.focus();
+  } else if (cancelText) {
+    cancelBtn.focus();
+  }
 
   const closeModal = () => {
     container.classList.add('hidden');
@@ -1123,12 +1132,23 @@ socket.on('game_init', (data) => {
   document.getElementById('game-screen').classList.remove('hidden');
   document.getElementById('nav-share-btn').classList.remove('hidden');
 
+  if (data.playerName) {
+    myName = data.playerName;
+  }
+
   // Update Profile cards
-  document.getElementById('player-name').textContent = myName || 'You';
-  document.getElementById('player-role-label').textContent = `${myRole.toUpperCase()} (You)`;
-  document.getElementById('player-avatar').textContent = myRole === 'white' ? '⚪' : '⚫';
+  if (myRole === 'spectator') {
+    document.getElementById('player-name').textContent = myName || 'Spectator';
+    document.getElementById('player-role-label').textContent = 'Spectator (Observer)';
+    document.getElementById('player-avatar').textContent = '👁️';
+  } else {
+    document.getElementById('player-name').textContent = myName || 'You';
+    document.getElementById('player-role-label').textContent = `${myRole.toUpperCase()} (You)`;
+    document.getElementById('player-avatar').textContent = myRole === 'white' ? '⚪' : '⚫';
+  }
 
   updatePlayersUI(data.players);
+  updateControlsVisibility();
   updateStatusMessage();
   renderBoard();
 
@@ -1156,6 +1176,36 @@ socket.on('players_update', (data) => {
   currentPlayers = data.players;
   updatePlayersUI(data.players);
 });
+
+function updateControlsVisibility() {
+  const playerControls = document.getElementById('player-controls');
+  const offerDrawBtn = document.getElementById('offer-draw-btn');
+  const resignBtn = document.getElementById('resign-btn');
+  const rematchBtn = document.getElementById('rematch-btn');
+  if (!playerControls) return;
+
+  const isPlayer = (myRole === 'white' || myRole === 'black');
+
+  if (!isPlayer) {
+    // Spectators cannot see or use player controls (Resign, Draw, Rematch)
+    playerControls.classList.add('hidden');
+    return;
+  }
+
+  playerControls.classList.remove('hidden');
+
+  if (isGameOver) {
+    // Game over: hide in-game controls, show Rematch
+    if (offerDrawBtn) offerDrawBtn.classList.add('hidden');
+    if (resignBtn) resignBtn.classList.add('hidden');
+    if (rematchBtn) rematchBtn.classList.remove('hidden');
+  } else {
+    // Game active: show Draw and Resign, hide Rematch
+    if (offerDrawBtn) offerDrawBtn.classList.remove('hidden');
+    if (resignBtn) resignBtn.classList.remove('hidden');
+    if (rematchBtn) rematchBtn.classList.add('hidden');
+  }
+}
 
 function updatePlayersUI(players) {
   if (!players) return;
@@ -1256,21 +1306,45 @@ socket.on('game_restarted', (data) => {
   moveHistory = [];
   document.getElementById('moves-tbody').innerHTML = '';
   document.getElementById('move-count-label').textContent = '0';
+
+  // Handle color swapping for active players
+  if (data.swapped && myRole !== 'spectator') {
+    myRole = (myRole === 'white') ? 'black' : 'white';
+    isFlipped = (myRole === 'black');
+    document.getElementById('player-name').textContent = myName || 'You';
+    document.getElementById('player-role-label').textContent = `${myRole.toUpperCase()} (You)`;
+    document.getElementById('player-avatar').textContent = myRole === 'white' ? '⚪' : '⚫';
+    showToast(`Rematch started! Colors swapped: You are now ${myRole.toUpperCase()}.`, 'success', 3500);
+  } else if (myRole === 'spectator') {
+    showToast('Rematch started! New game underway.', 'info', 3000);
+  } else {
+    showToast('Match restarted! White to move.', 'info');
+  }
+
+  // Close any open modals
+  const modalContainer = document.getElementById('modal-container');
+  if (modalContainer) modalContainer.classList.add('hidden');
+
+  if (data.players) {
+    updatePlayersUI(data.players);
+  }
+  updateControlsVisibility();
   updateStatusMessage();
   renderBoard();
   playSound('move');
-  showToast('Match restarted! White to move.', 'info');
 });
 
 socket.on('game_over', (data) => {
   cancelPremoves();
   isGameOver = true;
+  updateControlsVisibility();
   playSound('gameover');
   handleGameOverState(data);
 });
 
 function handleGameOverState(data) {
   isGameOver = true;
+  updateControlsVisibility();
   let icon = '🏆';
   let title = 'Game Over';
   let desc = data.message || '';
@@ -1287,39 +1361,98 @@ function handleGameOverState(data) {
     icon = '⏱️';
     title = `${data.winner} Wins on Time`;
     desc = data.message || `Time ran out. ${data.winner} wins!`;
+  } else if (data.reason === 'agreement') {
+    icon = '🤝';
+    title = 'Draw by Agreement';
+    desc = data.message || 'Game ended in a draw by mutual agreement.';
   } else {
     icon = '🤝';
-    title = `Game Drawn`;
+    title = 'Game Drawn';
     desc = `Match ended in a draw (${data.reason || 'draw'}).`;
   }
+
+  const isPlayer = (myRole === 'white' || myRole === 'black');
 
   showModal({
     icon,
     title,
-    message: `${desc}\n\nTotal moves: ${moveHistory.length}. Would you like to request a rematch?`,
-    confirmText: '🔁 Request Rematch',
+    message: isPlayer
+      ? `${desc}\n\nTotal moves: ${moveHistory.length}. Would you like to request a rematch?`
+      : `${desc}\n\nTotal moves: ${moveHistory.length}.`,
+    confirmText: isPlayer ? '🔁 Request Rematch' : null,
     cancelText: 'Close',
+    onConfirm: isPlayer ? () => {
+      requestRematch();
+    } : null
+  });
+}
+
+// ─── Draw Offer Handlers ──────────────────────────────────────────────────────
+function offerDraw() {
+  if (isGameOver || myRole === 'spectator') return;
+  showModal({
+    icon: '🤝',
+    title: 'Offer Draw',
+    message: 'Are you sure you want to offer a draw to your opponent?',
+    confirmText: 'Yes, Offer Draw',
+    cancelText: 'Cancel',
     onConfirm: () => {
-      socket.emit('restart_game', { roomId: currentRoom, playerToken });
+      socket.emit('offer_draw', { roomId: currentRoom, playerToken });
+      showToast('Draw offer sent to opponent.', 'info');
     }
   });
 }
 
-// Opponent restart consent modal (Fix #12)
-socket.on('restart_requested', (data) => {
+socket.on('draw_offered', (data) => {
+  showModal({
+    icon: '🤝',
+    title: 'Draw Offered',
+    message: `${data.playerName || 'Your opponent'} has offered a draw. Do you accept?`,
+    confirmText: 'Accept Draw',
+    cancelText: 'Decline',
+    onConfirm: () => {
+      socket.emit('respond_draw', { roomId: currentRoom, playerToken, accept: true });
+    },
+    onCancel: () => {
+      socket.emit('respond_draw', { roomId: currentRoom, playerToken, accept: false });
+      showToast('You declined the draw offer.', 'info');
+    }
+  });
+});
+
+socket.on('draw_declined', (data) => {
+  showToast(data.message || 'Draw offer was declined.', 'info', 3500);
+});
+
+// ─── Rematch Handlers ─────────────────────────────────────────────────────────
+function requestRematch() {
+  if (myRole === 'spectator') return;
+  socket.emit('request_rematch', { roomId: currentRoom, playerToken });
+}
+
+socket.on('rematch_requested', (data) => {
   showModal({
     icon: '🔁',
     title: 'Rematch Request',
-    message: data.message || 'Your opponent has requested to restart the match. Do you accept?',
+    message: `${data.requester || 'Your opponent'} has requested a rematch. Do you accept?`,
     confirmText: 'Accept Rematch',
     cancelText: 'Decline',
     onConfirm: () => {
-      socket.emit('restart_game', { roomId: currentRoom, playerToken });
+      socket.emit('respond_rematch', { roomId: currentRoom, playerToken, accept: true });
     },
     onCancel: () => {
+      socket.emit('respond_rematch', { roomId: currentRoom, playerToken, accept: false });
       showToast('Declined rematch request.', 'info');
     }
   });
+});
+
+socket.on('rematch_pending', (data) => {
+  showToast(data.message || 'Rematch request sent. Waiting for opponent...', 'info', 4000);
+});
+
+socket.on('rematch_declined', (data) => {
+  showToast(data.message || 'Rematch request was declined or expired.', 'info', 4000);
 });
 
 socket.on('chat_message', (msg) => {
@@ -1402,7 +1535,7 @@ function joinRoomByCode() {
   codeHint.classList.add('hidden');
 
   const nameInput = document.getElementById('player-name-input');
-  myName = nameInput.value.trim() || 'Player 2';
+  myName = nameInput.value.trim();
   const savedToken = sessionStorage.getItem('chess_player_token_' + code);
 
   socket.emit('join_game', {
@@ -1432,20 +1565,9 @@ function flipBoard() {
   showToast(isFlipped ? 'Board view: Black on bottom' : 'Board view: White on bottom', 'info', 1800);
 }
 
-function requestRestart() {
-  showModal({
-    icon: '🔁',
-    title: 'Restart Match',
-    message: 'Are you sure you want to request a new match in this room?',
-    confirmText: 'Yes, Restart',
-    cancelText: 'Cancel',
-    onConfirm: () => {
-      socket.emit('restart_game', { roomId: currentRoom, playerToken });
-    }
-  });
-}
-
 function confirmResign() {
+  if (isGameOver || myRole === 'spectator') return;
+
   showModal({
     icon: '🏳️',
     title: 'Resign Match',
@@ -1514,20 +1636,37 @@ function appendChatMessage(msg) {
   const chatBox = document.getElementById('chat-messages');
   if (!chatBox) return;
 
-  const isMe = (msg.sender === myName);
+  const isSpectator = !!msg.isSpectator || msg.role === 'spectator';
+  const isMe = (msg.sender === myName || (isSpectator && myName && msg.sender.startsWith(myName)));
+
   const div = document.createElement('div');
-  div.className = `flex flex-col p-2 rounded-xl border text-xs shadow-sm ${
-    isMe
-      ? 'bg-indigo-950/40 border-indigo-800/60 ml-4'
-      : 'bg-slate-950/80 border-slate-800/80 mr-4'
-  }`;
+  let containerClasses = 'flex flex-col p-2.5 rounded-xl border text-xs shadow-sm transition-all ';
+  if (isSpectator) {
+    containerClasses += isMe
+      ? 'bg-amber-950/25 border-amber-800/40 ml-4'
+      : 'bg-slate-950/90 border-amber-900/30 mr-4';
+  } else if (isMe) {
+    containerClasses += 'bg-indigo-950/40 border-indigo-800/60 ml-4';
+  } else {
+    containerClasses += 'bg-slate-950/80 border-slate-800/80 mr-4';
+  }
+  div.className = containerClasses;
+
+  const badgeHtml = isSpectator
+    ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 tracking-wide">Spectator</span>`
+    : (msg.role === 'white' || msg.role === 'black')
+      ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium ${msg.role === 'white' ? 'bg-slate-200/15 text-slate-200 border border-slate-400/20' : 'bg-slate-800/60 text-slate-400 border border-slate-700/50'}">${msg.role === 'white' ? '⚪ White' : '⚫ Black'}</span>`
+      : '';
 
   div.innerHTML = `
-    <div class="flex items-center justify-between text-[10px] text-slate-400 mb-0.5">
-      <span class="font-bold ${isMe ? 'text-indigo-300' : 'text-slate-300'}">${msg.sender}</span>
-      <span class="text-[9px] text-slate-500 font-mono">${msg.time}</span>
+    <div class="flex items-center justify-between text-[10px] text-slate-400 mb-1 gap-2">
+      <div class="flex items-center gap-1.5 min-w-0">
+        <span class="font-bold truncate ${isSpectator ? 'text-amber-300/90' : isMe ? 'text-indigo-300' : 'text-slate-300'}">${msg.sender}</span>
+        ${badgeHtml}
+      </div>
+      <span class="text-[9px] text-slate-500 font-mono shrink-0">${msg.time}</span>
     </div>
-    <div class="text-slate-200 text-xs break-words">${msg.text}</div>
+    <div class="text-slate-200 text-xs break-words leading-relaxed">${msg.text}</div>
   `;
   chatBox.appendChild(div);
   chatBox.scrollTop = chatBox.scrollHeight;

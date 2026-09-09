@@ -103,6 +103,18 @@ function getPlayerInfo(room, socketId) {
   return null;
 }
 
+// Verify that a socket and playerToken belong to an active player seat (rejects spectators)
+function getVerifiedPlayer(room, socket, playerToken) {
+  if (!room || !playerToken) return null;
+  if (room.players.white && room.players.white.id === socket.id && room.players.white.token === playerToken) {
+    return { color: 'white', player: room.players.white };
+  }
+  if (room.players.black && room.players.black.id === socket.id && room.players.black.token === playerToken) {
+    return { color: 'black', player: room.players.black };
+  }
+  return null;
+}
+
 // Build a public-safe players object (never leak tokens)
 function publicPlayers(room) {
   return {
@@ -251,6 +263,7 @@ function triggerAiMove(room, delayMs = 350) {
         let aiGameOverData = null;
         if (aiIsGameOver) {
           if (room.timerInterval) clearInterval(room.timerInterval);
+          room.gameOver = true;
           let aiWinner = null;
           let aiReason = 'draw';
           if (room.chess.isCheckmate()) {
@@ -293,6 +306,7 @@ function startClock(room) {
       room.clocks[turn]--;
       if (room.clocks[turn] === 0) {
         clearInterval(room.timerInterval);
+        room.gameOver = true;
         const winner = turn === 'white' ? 'Black' : 'White';
         io.to(room.id).emit('game_over', {
           winner,
@@ -416,6 +430,7 @@ io.on('connection', (socket) => {
     let token = (typeof playerToken === 'string' && playerToken) ? playerToken : crypto.randomUUID();
     const rawName = (typeof playerName === 'string' ? playerName : '').trim().substring(0, 24);
     const cleanName = sanitize(rawName || `Player-${socket.id.substring(0, 4)}`);
+    let assignedName = cleanName;
 
     // Determine host color if room is newly created
     let hostColor = 'white';
@@ -441,11 +456,18 @@ io.on('connection', (socket) => {
           existingUser.connected = true;
           role = existingUserColor;
           token = existingUser.token;
+          assignedName = existingUser.name;
         } else {
           // Someone else's AI game — join as spectator
           role = 'spectator';
           token = null;
-          room.spectators.push({ id: socket.id, name: cleanName });
+          room.spectatorCount = (room.spectatorCount || 0) + 1;
+          let specName = rawName;
+          if (!specName || specName.toLowerCase() === 'player 2' || specName.toLowerCase().startsWith('player-')) {
+            specName = `Spectator ${room.spectatorCount}`;
+          }
+          assignedName = sanitize(specName);
+          room.spectators.push({ id: socket.id, name: assignedName, role: 'spectator' });
         }
       } else {
         // New AI game: seat human player based on hostColor
@@ -466,11 +488,13 @@ io.on('connection', (socket) => {
         room.players.white.connected = true;
         role = 'white';
         token = room.players.white.token;
+        assignedName = room.players.white.name;
       } else if (room.players.black && room.players.black.token === playerToken) {
         room.players.black.id = socket.id;
         room.players.black.connected = true;
         role = 'black';
         token = room.players.black.token;
+        assignedName = room.players.black.name;
       } else if (isNewRoom) {
         // Room creator assigned according to hostColor
         if (hostColor === 'black') {
@@ -493,7 +517,13 @@ io.on('connection', (socket) => {
         } else {
           role = 'spectator';
           token = null;
-          room.spectators.push({ id: socket.id, name: cleanName });
+          room.spectatorCount = (room.spectatorCount || 0) + 1;
+          let specName = rawName;
+          if (!specName || specName.toLowerCase() === 'player 2' || specName.toLowerCase().startsWith('player-')) {
+            specName = `Spectator ${room.spectatorCount}`;
+          }
+          assignedName = sanitize(specName);
+          room.spectators.push({ id: socket.id, name: assignedName, role: 'spectator' });
         }
       }
     }
@@ -507,6 +537,7 @@ io.on('connection', (socket) => {
     socket.emit('game_init', {
       roomId: room.id,
       role,
+      playerName: assignedName,
       playerToken: token,
       fen: room.chess.fen(),
       pgn: room.chess.pgn(),
@@ -576,6 +607,7 @@ io.on('connection', (socket) => {
       let gameOverData = null;
       if (isGameOver) {
         if (room.timerInterval) clearInterval(room.timerInterval);
+        room.gameOver = true;
         let winner = null;
         let reason = 'draw';
         if (room.chess.isCheckmate()) {
@@ -613,67 +645,252 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ── restart_game ────────────────────────────────────────────────────────────
-  socket.on('restart_game', (payload) => {
-    // Fix #1: Payload validation
+  // ── startRematch helper ─────────────────────────────────────────────────────
+  function startRematch(room) {
+    if (room.rematchTimeout) clearTimeout(room.rematchTimeout);
+    room.rematchRequests = new Set();
+    room.drawOffer = null;
+    room.drawDeclinedAt = null;
+
+    // Swap player seats by default (chess.com convention)
+    const prevWhite = room.players.white;
+    const prevBlack = room.players.black;
+    room.players.white = prevBlack;
+    room.players.black = prevWhite;
+
+    // Reset chess and clocks
+    if (room.timerInterval) clearInterval(room.timerInterval);
+    room.chess = new Chess();
+    room.clocks = { white: room.timeControl, black: room.timeControl };
+    room.gameOver = false;
+    room._lastActivity = Date.now();
+    if (room.timeControl > 0) startClock(room);
+
+    // Notify all sockets in room
+    io.to(room.id).emit('game_restarted', {
+      fen: room.chess.fen(),
+      pgn: '',
+      turn: 'white',
+      clocks: room.clocks,
+      players: publicPlayers(room),
+      swapped: true
+    });
+
+    // If AI mode and AI is White, trigger AI move
+    if (room.mode === 'ai' && room.players.white?.id === 'ai-bot') {
+      triggerAiMove(room, 500);
+    }
+  }
+
+  // ── offer_draw ──────────────────────────────────────────────────────────────
+  socket.on('offer_draw', (payload) => {
     if (!payload || typeof payload !== 'object') {
-      return socket.emit('error_message', 'Invalid restart request.');
+      return socket.emit('error_message', 'Invalid draw offer request.');
     }
     const { roomId, playerToken } = payload;
-    if (typeof roomId !== 'string') {
-      return socket.emit('error_message', 'Invalid room ID.');
+    if (typeof roomId !== 'string' || typeof playerToken !== 'string') {
+      return socket.emit('error_message', 'Invalid parameters.');
     }
 
     const room = rooms.get(roomId);
     if (!room) return socket.emit('error_message', 'Room not found.');
 
-    // Only authorized players can restart
-    const isWhite = room.players.white && room.players.white.token === playerToken;
-    const isBlack = room.players.black && room.players.black.token === playerToken;
-    if (!isWhite && !isBlack) {
-      return socket.emit('error_message', 'Only active players can restart the game.');
+    const verified = getVerifiedPlayer(room, socket, playerToken);
+    if (!verified) {
+      return socket.emit('error_message', 'Only active players can offer a draw.');
     }
 
-    // Fix #12: Require game to be over for PvP, OR mutual consent
-    if (room.mode !== 'ai' && !room.chess.isGameOver()) {
-      const requesterColor = isWhite ? 'white' : 'black';
-      room.restartRequests.add(requesterColor);
+    if (room.chess.isGameOver() || room.gameOver) {
+      return socket.emit('error_message', 'Game is already over.');
+    }
 
-      // If only one player requested, notify and wait for consent
-      if (room.restartRequests.size < 2) {
-        socket.emit('error_message', 'Restart requested. Waiting for opponent to agree.');
-        // Notify the opponent
-        const opponentColor = requesterColor === 'white' ? 'black' : 'white';
-        const opponentPlayer = room.players[opponentColor];
-        if (opponentPlayer && opponentPlayer.id) {
-          io.to(opponentPlayer.id).emit('restart_requested', {
-            requester: requesterColor,
-            message: `${requesterColor === 'white' ? 'White' : 'Black'} wants to restart the game. Click Restart to accept.`
-          });
-        }
+    // Cooldown check (prevent draw offer spam)
+    if (room.drawOffer) {
+      return socket.emit('error_message', 'A draw offer is already pending.');
+    }
+    if (room.drawDeclinedAt && Date.now() - room.drawDeclinedAt < 20000) {
+      const waitSec = Math.ceil((20000 - (Date.now() - room.drawDeclinedAt)) / 1000);
+      return socket.emit('error_message', `Please wait ${waitSec}s before offering another draw.`);
+    }
+
+    const offeringColor = verified.color;
+    const opponentColor = offeringColor === 'white' ? 'black' : 'white';
+    const opponent = room.players[opponentColor];
+
+    // Handle AI game
+    if (room.mode === 'ai' && opponent && opponent.id === 'ai-bot') {
+      const evalScore = evaluateBoard(room.chess);
+      const aiAdvantage = opponentColor === 'white' ? evalScore : -evalScore;
+      if (aiAdvantage > 150) {
+        room.drawDeclinedAt = Date.now();
+        return socket.emit('draw_declined', { message: 'AI declined the draw offer.' });
+      } else {
+        if (room.timerInterval) clearInterval(room.timerInterval);
+        room.gameOver = true;
+        io.to(room.id).emit('game_over', {
+          winner: null,
+          reason: 'agreement',
+          message: 'Draw agreed! AI accepted your draw offer. 🤝'
+        });
+        scheduleRoomCleanup(room);
         return;
       }
-      // Both agreed — fall through to restart
     }
 
-    // Perform restart
-    if (room.timerInterval) clearInterval(room.timerInterval);
-    room.chess = new Chess();
-    room.clocks = { white: room.timeControl, black: room.timeControl };
-    room.restartRequests = new Set();
-    room._lastActivity = Date.now();
-    if (room.timeControl > 0) startClock(room);
+    if (!opponent || opponent.connected === false) {
+      return socket.emit('error_message', 'Opponent is not connected.');
+    }
 
-    io.to(room.id).emit('game_restarted', {
-      fen: room.chess.fen(),
-      pgn: '',
-      turn: 'white',
-      clocks: room.clocks
+    room.drawOffer = { from: offeringColor, timestamp: Date.now() };
+
+    // Emit offer to opponent
+    io.to(opponent.id).emit('draw_offered', {
+      from: offeringColor,
+      playerName: verified.player.name
+    });
+  });
+
+  // ── respond_draw ────────────────────────────────────────────────────────────
+  socket.on('respond_draw', (payload) => {
+    if (!payload || typeof payload !== 'object') {
+      return socket.emit('error_message', 'Invalid draw response.');
+    }
+    const { roomId, playerToken, accept } = payload;
+    if (typeof roomId !== 'string' || typeof playerToken !== 'string') {
+      return socket.emit('error_message', 'Invalid parameters.');
+    }
+
+    const room = rooms.get(roomId);
+    if (!room) return;
+
+    const verified = getVerifiedPlayer(room, socket, playerToken);
+    if (!verified) {
+      return socket.emit('error_message', 'Only active players can respond to a draw offer.');
+    }
+
+    if (!room.drawOffer) return;
+
+    // Verify respondent is the opponent of the offerer
+    if (verified.color === room.drawOffer.from) {
+      return socket.emit('error_message', 'Cannot respond to your own draw offer.');
+    }
+
+    const offeringPlayer = room.players[room.drawOffer.from];
+    room.drawOffer = null;
+
+    if (accept) {
+      if (room.timerInterval) clearInterval(room.timerInterval);
+      room.gameOver = true;
+      io.to(room.id).emit('game_over', {
+        winner: null,
+        reason: 'agreement',
+        message: 'Draw agreed! Game ended by mutual agreement. 🤝'
+      });
+      scheduleRoomCleanup(room);
+    } else {
+      room.drawDeclinedAt = Date.now();
+      if (offeringPlayer && offeringPlayer.id) {
+        io.to(offeringPlayer.id).emit('draw_declined', {
+          message: `${verified.player.name} declined the draw offer.`
+        });
+      }
+    }
+  });
+
+  // ── request_rematch ─────────────────────────────────────────────────────────
+  socket.on('request_rematch', (payload) => {
+    if (!payload || typeof payload !== 'object') {
+      return socket.emit('error_message', 'Invalid rematch request.');
+    }
+    const { roomId, playerToken } = payload;
+    if (typeof roomId !== 'string' || typeof playerToken !== 'string') {
+      return socket.emit('error_message', 'Invalid parameters.');
+    }
+
+    const room = rooms.get(roomId);
+    if (!room) return socket.emit('error_message', 'Room not found.');
+
+    const verified = getVerifiedPlayer(room, socket, playerToken);
+    if (!verified) {
+      return socket.emit('error_message', 'Only active players can request a rematch.');
+    }
+
+    // Rematch is only allowed when game has ended
+    if (!room.chess.isGameOver() && !room.gameOver) {
+      return socket.emit('error_message', 'Cannot rematch while game is still active.');
+    }
+
+    // AI Mode: AI always immediately accepts rematch
+    if (room.mode === 'ai') {
+      startRematch(room);
+      return;
+    }
+
+    const requesterColor = verified.color;
+    const opponentColor = requesterColor === 'white' ? 'black' : 'white';
+    const opponent = room.players[opponentColor];
+
+    if (!opponent || opponent.connected === false) {
+      return socket.emit('error_message', 'Opponent is not connected.');
+    }
+
+    room.rematchRequests = room.rematchRequests || new Set();
+    room.rematchRequests.add(requesterColor);
+
+    // If both players requested, trigger rematch!
+    if (room.rematchRequests.size >= 2) {
+      startRematch(room);
+      return;
+    }
+
+    // Single request: notify requester & opponent, set 45s expiration timer
+    socket.emit('rematch_pending', { message: 'Rematch request sent. Waiting for opponent...' });
+    io.to(opponent.id).emit('rematch_requested', {
+      requester: verified.player.name,
+      message: `${verified.player.name} wants a rematch!`
     });
 
-    // If AI is playing as White, trigger opening move on restart
-    if (room.mode === 'ai' && room.players.white?.id === 'ai-bot') {
-      triggerAiMove(room, 500);
+    if (room.rematchTimeout) clearTimeout(room.rematchTimeout);
+    room.rematchTimeout = setTimeout(() => {
+      if (room.rematchRequests && room.rematchRequests.size > 0 && room.rematchRequests.size < 2) {
+        room.rematchRequests.clear();
+        io.to(room.id).emit('rematch_declined', {
+          reason: 'timeout',
+          message: 'Rematch request expired (no response from opponent).'
+        });
+      }
+    }, 45000);
+  });
+
+  // ── respond_rematch ─────────────────────────────────────────────────────────
+  socket.on('respond_rematch', (payload) => {
+    if (!payload || typeof payload !== 'object') {
+      return socket.emit('error_message', 'Invalid rematch response.');
+    }
+    const { roomId, playerToken, accept } = payload;
+    if (typeof roomId !== 'string' || typeof playerToken !== 'string') {
+      return socket.emit('error_message', 'Invalid parameters.');
+    }
+
+    const room = rooms.get(roomId);
+    if (!room) return;
+
+    const verified = getVerifiedPlayer(room, socket, playerToken);
+    if (!verified) {
+      return socket.emit('error_message', 'Only active players can respond to a rematch.');
+    }
+
+    if (!room.rematchRequests || room.rematchRequests.size === 0) return;
+
+    if (accept) {
+      startRematch(room);
+    } else {
+      if (room.rematchTimeout) clearTimeout(room.rematchTimeout);
+      room.rematchRequests.clear();
+      io.to(room.id).emit('rematch_declined', {
+        reason: 'declined',
+        message: `${verified.player.name} declined the rematch request.`
+      });
     }
   });
 
@@ -699,19 +916,33 @@ io.on('connection', (socket) => {
     const cleanText = sanitize(text.trim().substring(0, 200));
     if (!cleanText) return;
 
-    // Fix #5: Derive sender from server-side state, not client payload
-    const playerInfo = getPlayerInfo(room, socket.id);
+    // Spectator Chat Identity: Explicitly check player records first
+    const isWhite = room.players.white && room.players.white.id === socket.id;
+    const isBlack = room.players.black && room.players.black.id === socket.id;
     let senderName;
-    if (playerInfo) {
-      senderName = playerInfo.player.name;
+    let isSpectator = false;
+    let senderRole = 'spectator';
+
+    if (isWhite) {
+      senderName = room.players.white.name;
+      senderRole = 'white';
+    } else if (isBlack) {
+      senderName = room.players.black.name;
+      senderRole = 'black';
     } else {
+      // Classified as spectator — do NOT fall through to default player label
+      isSpectator = true;
+      senderRole = 'spectator';
       const spec = room.spectators.find(s => s.id === socket.id);
-      senderName = spec ? spec.name : 'Spectator';
+      const baseName = spec ? spec.name : 'Spectator';
+      senderName = `${baseName} (Spectator)`;
     }
 
     const msg = {
       id: Date.now(),
       sender: senderName,
+      isSpectator,
+      role: senderRole,
       text: cleanText,
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
@@ -727,21 +958,22 @@ io.on('connection', (socket) => {
       return socket.emit('error_message', 'Invalid resign request.');
     }
     const { roomId, playerToken } = payload;
-    if (typeof roomId !== 'string') {
-      return socket.emit('error_message', 'Invalid room ID.');
+    if (typeof roomId !== 'string' || typeof playerToken !== 'string') {
+      return socket.emit('error_message', 'Invalid room ID or player token.');
     }
 
     const room = rooms.get(roomId);
-    if (!room || room.chess.isGameOver()) return;
+    if (!room || room.chess.isGameOver() || room.gameOver) return;
 
-    const isWhite = room.players.white && room.players.white.token === playerToken;
-    const isBlack = room.players.black && room.players.black.token === playerToken;
-
-    if (!isWhite && !isBlack) {
+    // Reuse seat/token verification — spectators are strictly rejected
+    const verified = getVerifiedPlayer(room, socket, playerToken);
+    if (!verified) {
       return socket.emit('error_message', 'Only active players can resign.');
     }
 
     if (room.timerInterval) clearInterval(room.timerInterval);
+    room.gameOver = true;
+    const isWhite = verified.color === 'white';
     const winner = isWhite ? 'Black' : 'White';
     io.to(room.id).emit('game_over', {
       winner,
