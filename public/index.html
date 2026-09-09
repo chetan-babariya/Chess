@@ -1,23 +1,31 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="h-full bg-slate-950">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Chess Live: Real-Time Multiplayer</title>
-  <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="style.css">
   <script src="/socket.io/socket.io.js"></script>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
+<body class="bg-[#090d16] text-slate-100 min-h-full flex flex-col font-sans selection:bg-indigo-600 selection:text-white antialiased">
+
+  <!-- Network Reconnecting Banner -->
+  <div id="reconnecting-banner" class="hidden bg-amber-500/15 border-b border-amber-500/30 px-4 py-2 text-center text-xs font-semibold text-amber-300 flex items-center justify-center gap-2 transition-all">
+    <svg class="animate-spin h-3.5 w-3.5 text-amber-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+    </svg>
+    <span>Connection lost. Reconnecting to live game server...</span>
+  </div>
 
   <!-- Top Navbar -->
-  <header class="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-md sticky top-0 z-40 px-4 py-2.5">
+  <header class="border-b border-slate-800/80 bg-slate-900/70 backdrop-blur-md sticky top-0 z-30 px-4 py-2.5">
     <div class="max-w-6xl mx-auto flex items-center justify-between">
       <div class="flex items-center gap-2.5">
-        <span class="text-2xl">♟️</span>
+        <span class="text-2xl filter drop-shadow">♟️</span>
         <div>
           <h1 class="font-bold text-base tracking-tight bg-gradient-to-r from-amber-200 via-indigo-200 to-indigo-400 bg-clip-text text-transparent">Chess Live</h1>
-          <p class="text-[10px] text-slate-400">LAN & Cloud Multiplayer</p>
+          <p class="text-[10px] text-slate-400 tracking-wide font-medium">Real-Time PvP & AI Engine</p>
         </div>
       </div>
 
@@ -27,8 +35,8 @@
           <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
           <span id="conn-text">Online</span>
         </div>
-        <button id="nav-share-btn" onclick="copyInviteLink()" class="hidden px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white transition flex items-center gap-1">
-          <span>📋</span> Copy Invite
+        <button id="nav-share-btn" onclick="copyInviteLink()" class="hidden px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-xs font-semibold text-white transition flex items-center gap-1 shadow-sm cursor-pointer">
+          <span>📋</span> <span class="hidden sm:inline">Copy</span> Invite
         </button>
       </div>
     </div>
@@ -38,60 +46,79 @@
   <main class="flex-1 max-w-6xl w-full mx-auto p-3 sm:p-4 flex flex-col justify-center">
 
     <!-- Screen 1: Lobby / Setup Screen -->
-    <div id="lobby-screen" class="max-w-md w-full mx-auto bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-2xl backdrop-blur-sm">
+    <div id="lobby-screen" class="max-w-md w-full mx-auto bg-slate-900/90 border border-slate-800/90 rounded-2xl p-6 sm:p-7 shadow-2xl backdrop-blur-md">
       <div class="text-center mb-6">
-        <div class="inline-flex p-3 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-3xl mb-2">♔</div>
-        <h2 class="text-xl font-bold text-white">Play Real-Time Chess</h2>
-        <p class="text-xs text-slate-400 mt-1">Play across different PCs on your local Wi-Fi or with friends online</p>
+        <div class="inline-flex p-3 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-3xl mb-2.5 shadow-inner">♔</div>
+        <h2 class="text-xl font-bold text-white tracking-tight">Real-Time Multiplayer Chess</h2>
+        <p class="text-xs text-slate-400 mt-1">Play across different PCs on local Wi-Fi or with friends online</p>
       </div>
 
       <!-- Player Name -->
       <div class="mb-4">
-        <label class="block text-xs font-semibold text-slate-300 mb-1">Your Display Name</label>
-        <input type="text" id="player-name-input" placeholder="e.g. Grandmaster" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 transition">
+        <label for="player-name-input" class="block text-xs font-semibold text-slate-300 mb-1">Your Display Name</label>
+        <input type="text" id="player-name-input" maxlength="24" placeholder="e.g. Grandmaster" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition">
+        <span id="name-error-hint" class="hidden text-[11px] text-rose-400 mt-1 block">Please enter your display name.</span>
       </div>
 
       <!-- Mode Selector Tabs -->
-      <div class="grid grid-cols-2 gap-1.5 p-1 bg-slate-950 border border-slate-800 rounded-xl mb-5">
-        <button id="tab-btn-pvp" onclick="switchLobbyTab('pvp')" class="py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 text-white transition">Multiplayer Room</button>
-        <button id="tab-btn-ai" onclick="switchLobbyTab('ai')" class="py-1.5 text-xs font-semibold rounded-lg text-slate-400 hover:text-white transition">Play vs AI</button>
+      <div class="grid grid-cols-2 gap-1.5 p-1 bg-slate-950 border border-slate-800/90 rounded-xl mb-5">
+        <button id="tab-btn-pvp" onclick="switchLobbyTab('pvp')" class="py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white transition shadow-sm cursor-pointer">Multiplayer Room</button>
+        <button id="tab-btn-ai" onclick="switchLobbyTab('ai')" class="py-2 text-xs font-semibold rounded-lg text-slate-400 hover:text-white transition cursor-pointer">Play vs AI</button>
       </div>
 
       <!-- PvP Tab Content -->
       <div id="tab-content-pvp" class="space-y-4">
         <div>
-          <label class="block text-xs font-semibold text-slate-300 mb-1">Time Control</label>
-          <select id="time-control-select" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 transition">
-            <option value="600">Rapid (10 minutes)</option>
-            <option value="300">Blitz (5 minutes)</option>
-            <option value="180">Bullet (3 minutes)</option>
-            <option value="0">Casual (No Timer)</option>
-          </select>
+          <label class="block text-xs font-semibold text-slate-300 mb-2">Select Time Control</label>
+          <div class="grid grid-cols-2 gap-2" id="tc-options">
+            <button type="button" onclick="selectTimeControl(600, this)" class="tc-btn active p-2.5 rounded-xl border border-indigo-500/50 bg-indigo-600/15 text-left transition cursor-pointer">
+              <div class="text-xs font-bold text-indigo-300">⏳ Rapid (10m)</div>
+              <div class="text-[10px] text-slate-400">10 mins per side</div>
+            </button>
+            <button type="button" onclick="selectTimeControl(300, this)" class="tc-btn p-2.5 rounded-xl border border-slate-800 bg-slate-950 text-left hover:border-slate-700 transition cursor-pointer">
+              <div class="text-xs font-bold text-slate-200">⏱️ Blitz (5m)</div>
+              <div class="text-[10px] text-slate-400">5 mins per side</div>
+            </button>
+            <button type="button" onclick="selectTimeControl(180, this)" class="tc-btn p-2.5 rounded-xl border border-slate-800 bg-slate-950 text-left hover:border-slate-700 transition cursor-pointer">
+              <div class="text-xs font-bold text-slate-200">⚡ Bullet (3m)</div>
+              <div class="text-[10px] text-slate-400">3 mins per side</div>
+            </button>
+            <button type="button" onclick="selectTimeControl(0, this)" class="tc-btn p-2.5 rounded-xl border border-slate-800 bg-slate-950 text-left hover:border-slate-700 transition cursor-pointer">
+              <div class="text-xs font-bold text-slate-200">☕ Casual</div>
+              <div class="text-[10px] text-slate-400">Untimed match</div>
+            </button>
+          </div>
+          <input type="hidden" id="time-control-val" value="600">
         </div>
 
-        <button onclick="createRoom()" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 font-bold text-sm text-white shadow-lg shadow-indigo-600/20 transition active:scale-[0.99]">
-          ⚔️ Create New Game Room
+        <button id="create-room-btn" onclick="createRoom()" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 active:scale-[0.99] font-bold text-sm text-white shadow-lg shadow-indigo-600/25 transition cursor-pointer flex items-center justify-center gap-2">
+          <span>⚔️</span> <span>Create New Game Room</span>
         </button>
 
         <div class="flex items-center gap-2 my-3">
           <div class="flex-1 h-px bg-slate-800"></div>
-          <span class="text-[11px] text-slate-500 font-semibold uppercase">Or Join Room</span>
+          <span class="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Or Join Existing</span>
           <div class="flex-1 h-px bg-slate-800"></div>
         </div>
 
-        <div class="flex gap-2">
-          <input type="text" id="join-room-input" placeholder="Enter 6-character Code" class="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono uppercase text-white focus:outline-none focus:border-indigo-500 transition">
-          <button onclick="joinRoomByCode()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-white transition">
-            Join
-          </button>
+        <div>
+          <div class="flex gap-2">
+            <input type="text" id="join-room-input" maxlength="12" placeholder="Enter Room Code" class="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-mono uppercase tracking-widest text-white focus:outline-none focus:border-indigo-500 transition">
+            <button onclick="joinRoomByCode()" class="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-xs font-bold text-white transition cursor-pointer">
+              Join
+            </button>
+          </div>
+          <span id="code-error-hint" class="hidden text-[11px] text-rose-400 mt-1 block">Please enter a valid room code.</span>
         </div>
       </div>
 
       <!-- AI Tab Content -->
       <div id="tab-content-ai" class="hidden space-y-4">
-        <p class="text-xs text-slate-400">Play an instant single-player match against the integrated Antigravity Minimax AI engine right in your browser.</p>
-        <button onclick="startAiGame()" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 font-bold text-sm text-white shadow-lg shadow-emerald-600/20 transition active:scale-[0.99]">
-          🤖 Start Match vs AI
+        <div class="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800/80 text-xs text-slate-300 leading-relaxed">
+          Play a single-player match against the built-in Minimax AI engine with material-positional evaluation directly in your browser.
+        </div>
+        <button onclick="startAiGame()" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 active:scale-[0.99] font-bold text-sm text-white shadow-lg shadow-emerald-600/25 transition cursor-pointer flex items-center justify-center gap-2">
+          <span>🤖</span> <span>Start Match vs AI</span>
         </button>
       </div>
 
@@ -99,51 +126,63 @@
       <div class="mt-5 p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 text-[11px] text-slate-400 flex items-start gap-2">
         <span class="text-sm">🌐</span>
         <div>
-          <span class="font-semibold text-slate-300">Local Wi-Fi Play:</span> Check the server console for your LAN URL, then share it with any laptop or phone on your network to play together!
+          <span class="font-semibold text-slate-300">Local Wi-Fi Play:</span> Check the server console for your LAN IP URL, then share it with any laptop or phone on your network to play together!
         </div>
       </div>
     </div>
 
     <!-- Screen 2: Game Board Screen -->
-    <div id="game-screen" class="hidden flex flex-col lg:flex-row items-center lg:items-start justify-center gap-4">
+    <div id="game-screen" class="hidden flex flex-col lg:flex-row items-center lg:items-start justify-center gap-4 lg:gap-6">
       
       <!-- Chessboard Column -->
       <div class="flex flex-col items-center">
 
         <!-- Opponent Header Card -->
-        <div class="w-full max-w-[360px] sm:max-w-[420px] flex items-center justify-between p-2.5 mb-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs shadow-sm">
-          <div class="flex items-center gap-2 truncate">
-            <div class="w-7 h-7 rounded-lg bg-slate-800 flex items-center justify-center font-bold text-xs" id="opp-avatar">⚫</div>
+        <div id="opp-card" class="w-full max-w-[var(--board-size)] flex items-center justify-between p-2.5 mb-2 rounded-xl bg-slate-900/90 border border-slate-800 text-xs shadow-md transition-all">
+          <div class="flex items-center gap-2.5 truncate">
+            <div class="w-8 h-8 rounded-lg bg-slate-800 border border-slate-700/80 flex items-center justify-center font-bold text-sm shadow-inner" id="opp-avatar">⚫</div>
             <div class="truncate">
-              <div class="font-bold text-slate-200 truncate" id="opp-name">Waiting for opponent...</div>
-              <div class="text-[10px] text-slate-400" id="opp-role-label">Black</div>
+              <div class="font-bold text-slate-100 truncate text-xs sm:text-sm" id="opp-name">Waiting for opponent...</div>
+              <div class="text-[10px] text-slate-400 flex items-center gap-1.5 font-medium" id="opp-role-label">
+                <span>Black</span>
+              </div>
             </div>
           </div>
-          <div class="flex items-center gap-2">
-            <div class="text-[11px] text-slate-400 font-mono" id="opp-captured"></div>
-            <div class="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 font-mono text-xs font-bold text-white shadow-inner" id="opp-clock">
+          <div class="flex items-center gap-2.5">
+            <!-- Captured pieces tray & material score -->
+            <div class="flex items-center gap-1">
+              <div class="captured-tray" id="opp-captured"></div>
+              <span id="opp-advantage" class="hidden text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-amber-300 font-mono"></span>
+            </div>
+            <div class="px-3 py-1 rounded-lg bg-slate-950 border border-slate-800 font-mono text-xs sm:text-sm font-bold text-white shadow-inner tracking-wider" id="opp-clock">
               --:--
             </div>
           </div>
         </div>
 
-        <!-- The Chess Board -->
-        <div class="relative border-4 border-slate-800 rounded-lg shadow-2xl overflow-hidden bg-amber-900/40" id="board-frame">
-          <div id="board" class="grid grid-cols-8"></div>
+        <!-- The Chess Board Container -->
+        <div class="relative border-4 border-slate-800/90 rounded-xl shadow-2xl overflow-hidden bg-amber-950/30" id="board-frame">
+          <div id="board"></div>
         </div>
 
         <!-- Player Header Card -->
-        <div class="w-full max-w-[360px] sm:max-w-[420px] flex items-center justify-between p-2.5 mt-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs shadow-sm">
-          <div class="flex items-center gap-2 truncate">
-            <div class="w-7 h-7 rounded-lg bg-amber-200 text-amber-950 flex items-center justify-center font-bold text-xs" id="player-avatar">⚪</div>
+        <div id="player-card" class="w-full max-w-[var(--board-size)] flex items-center justify-between p-2.5 mt-2 rounded-xl bg-slate-900/90 border border-slate-800 text-xs shadow-md transition-all">
+          <div class="flex items-center gap-2.5 truncate">
+            <div class="w-8 h-8 rounded-lg bg-amber-100 border border-amber-200 text-slate-900 flex items-center justify-center font-bold text-sm shadow-inner" id="player-avatar">⚪</div>
             <div class="truncate">
-              <div class="font-bold text-slate-200 truncate" id="player-name">You</div>
-              <div class="text-[10px] text-slate-400" id="player-role-label">White</div>
+              <div class="font-bold text-slate-100 truncate text-xs sm:text-sm" id="player-name">You</div>
+              <div class="text-[10px] text-slate-400 flex items-center gap-1.5 font-medium" id="player-role-label">
+                <span>White</span>
+              </div>
             </div>
           </div>
-          <div class="flex items-center gap-2">
-            <div class="text-[11px] text-slate-400 font-mono" id="player-captured"></div>
-            <div class="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 font-mono text-xs font-bold text-white shadow-inner" id="player-clock">
+          <div class="flex items-center gap-2.5">
+            <!-- Captured pieces tray & material score -->
+            <div class="flex items-center gap-1">
+              <div class="captured-tray" id="player-captured"></div>
+              <span id="player-advantage" class="hidden text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-amber-300 font-mono"></span>
+            </div>
+            <div class="px-3 py-1 rounded-lg bg-slate-950 border border-slate-800 font-mono text-xs sm:text-sm font-bold text-white shadow-inner tracking-wider" id="player-clock">
               --:--
             </div>
           </div>
@@ -152,24 +191,30 @@
       </div>
 
       <!-- Right Sidebar: Info, Moves, Chat -->
-      <div class="w-full max-w-[360px] sm:max-w-[420px] lg:w-80 flex flex-col gap-2.5">
+      <div class="w-full max-w-[var(--board-size)] lg:w-80 flex flex-col gap-2.5">
 
         <!-- Game Status Banner -->
-        <div class="p-3 rounded-xl bg-slate-900 border border-slate-800 text-xs">
-          <div class="flex items-center justify-between mb-1">
+        <div class="p-3 rounded-xl bg-slate-900/90 border border-slate-800 text-xs shadow-sm">
+          <div class="flex items-center justify-between mb-1.5">
             <span class="text-[10px] uppercase tracking-wider font-bold text-slate-400">Match Status</span>
-            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20" id="room-code-badge">ROOM</span>
+            <button onclick="copyInviteLink()" title="Click to copy room code" class="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-indigo-500/15 text-indigo-300 border border-indigo-500/25 hover:bg-indigo-500/25 transition cursor-pointer" id="room-code-badge">ROOM</button>
           </div>
-          <div class="font-semibold text-slate-200 text-xs truncate" id="status-message">
-            White to move.
+          <div class="font-semibold text-slate-100 text-xs sm:text-sm flex items-center gap-2" id="status-message">
+            <span class="w-2 h-2 rounded-full bg-indigo-400 animate-pulse"></span>
+            <span>White to move.</span>
           </div>
         </div>
 
         <!-- Moves Table -->
-        <div class="border border-slate-800 rounded-xl overflow-hidden bg-slate-900 h-36 flex flex-col">
-          <div class="bg-slate-950/80 px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800 flex justify-between">
-            <span>Moves</span>
-            <span id="move-count-label">0 moves</span>
+        <div class="border border-slate-800 rounded-xl overflow-hidden bg-slate-900/90 h-40 flex flex-col shadow-sm">
+          <div class="bg-slate-950/90 px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800 flex justify-between items-center">
+            <div class="flex items-center gap-1.5">
+              <span>Moves</span>
+              <span id="move-count-label" class="text-slate-500 font-mono">0</span>
+            </div>
+            <button onclick="copyPgn()" class="text-[10px] text-indigo-400 hover:text-indigo-300 font-medium cursor-pointer transition">
+              Copy PGN
+            </button>
           </div>
           <div class="flex-1 overflow-y-auto" id="moves-scroll">
             <table class="w-full text-left text-xs">
@@ -179,14 +224,15 @@
         </div>
 
         <!-- Live In-Game Chat -->
-        <div class="border border-slate-800 rounded-xl overflow-hidden bg-slate-900 h-44 flex flex-col">
-          <div class="bg-slate-950/80 px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800">
-            Room Chat
+        <div class="border border-slate-800 rounded-xl overflow-hidden bg-slate-900/90 h-44 flex flex-col shadow-sm">
+          <div class="bg-slate-950/90 px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800 flex justify-between items-center">
+            <span>Room Chat</span>
+            <span class="text-[10px] text-slate-500">Live</span>
           </div>
           <div id="chat-messages" class="flex-1 p-2 overflow-y-auto space-y-1.5 text-xs font-sans"></div>
           <form onsubmit="sendChat(event)" class="flex border-t border-slate-800 bg-slate-950">
-            <input type="text" id="chat-input" placeholder="Type a message..." class="flex-1 bg-transparent px-2.5 py-1.5 text-xs text-white focus:outline-none">
-            <button type="submit" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition">
+            <input type="text" id="chat-input" maxlength="200" placeholder="Type a message..." class="flex-1 bg-transparent px-3 py-2 text-xs text-white focus:outline-none placeholder:text-slate-500">
+            <button type="submit" class="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white text-xs font-bold transition cursor-pointer">
               Send
             </button>
           </form>
@@ -194,14 +240,14 @@
 
         <!-- Game Controls -->
         <div class="grid grid-cols-3 gap-2">
-          <button onclick="flipBoard()" class="py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition flex items-center justify-center gap-1">
-            <span>🔄</span> Flip
+          <button onclick="flipBoard()" class="py-2.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 active:scale-95 text-xs font-semibold text-slate-200 transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm" title="Flip the board view">
+            <span>🔄</span> <span>Flip</span>
           </button>
-          <button onclick="requestRestart()" class="py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition flex items-center justify-center gap-1">
-            <span>🔁</span> Restart
+          <button onclick="requestRestart()" class="py-2.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 active:scale-95 text-xs font-semibold text-slate-200 transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm" title="Request to start a new match">
+            <span>🔁</span> <span>Restart</span>
           </button>
-          <button onclick="confirmResign()" class="py-2 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/40 text-xs font-semibold text-rose-300 transition flex items-center justify-center gap-1">
-            <span>🏳️</span> Resign
+          <button onclick="confirmResign()" class="py-2.5 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/40 active:scale-95 text-xs font-semibold text-rose-300 transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm" title="Resign this match">
+            <span>🏳️</span> <span>Resign</span>
           </button>
         </div>
 
@@ -210,6 +256,24 @@
     </div>
 
   </main>
+
+  <!-- Toast Notification Stack -->
+  <div id="toast-container" aria-live="polite"></div>
+
+  <!-- Custom Modal Overlay -->
+  <div id="modal-container" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm modal-backdrop" role="dialog" aria-modal="true">
+    <div id="modal-box" class="bg-slate-900 border border-slate-700/80 rounded-2xl p-6 max-w-sm w-full shadow-2xl modal-content">
+      <div class="text-center">
+        <div id="modal-icon" class="text-3xl mb-2">⚠️</div>
+        <h3 id="modal-title" class="text-base font-bold text-white mb-2">Modal Title</h3>
+        <p id="modal-message" class="text-xs text-slate-300 mb-5 leading-relaxed">Modal message text goes here.</p>
+        <div class="flex gap-2 justify-center" id="modal-actions">
+          <button id="modal-cancel-btn" class="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 transition cursor-pointer">Cancel</button>
+          <button id="modal-confirm-btn" class="flex-1 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white transition cursor-pointer">Confirm</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>

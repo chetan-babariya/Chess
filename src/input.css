@@ -1,0 +1,278 @@
+@import "tailwindcss";
+
+@theme {
+  --color-board-light: #ebecd0;
+  --color-board-dark: #739552;
+  --color-board-selected: #facc15;
+  --color-board-lastmove: rgba(250, 204, 21, 0.4);
+  --color-board-check: #ef4444;
+
+  --color-surface-base: #090d16;
+  --color-surface-card: #0f172a;
+  --color-surface-elevated: #1e293b;
+  --color-surface-border: #334155;
+
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+:root {
+  --board-size: min(92vw, min(62vh, 440px));
+  --square-size: calc(var(--board-size) / 8);
+}
+
+@media (min-width: 640px) {
+  :root {
+    --board-size: min(88vw, min(68vh, 500px));
+  }
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --board-size: min(45vw, min(75vh, 540px));
+  }
+}
+
+/* ─── Chessboard Container ──────────────────────────────────────────────────── */
+#board-frame {
+  width: var(--board-size);
+  height: var(--board-size);
+  user-select: none;
+  touch-action: manipulation;
+}
+
+#board {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  grid-template-rows: repeat(8, 1fr);
+}
+
+/* ─── Chessboard Square Dimensions & Theme ──────────────────────────────────── */
+.chess-square {
+  width: var(--square-size);
+  height: var(--square-size);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--square-size) * 0.68);
+  user-select: none;
+  position: relative;
+  cursor: pointer;
+  transition: background-color 0.15s ease, filter 0.15s ease;
+}
+
+.chess-square:hover:not(.cursor-not-allowed) {
+  filter: brightness(1.04);
+}
+
+.sq-light {
+  background-color: #ebecd0;
+}
+
+.sq-dark {
+  background-color: #739552;
+}
+
+/* ─── Board Highlights ──────────────────────────────────────────────────────── */
+.sq-selected {
+  background-color: #baca44 !important;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.4);
+}
+
+.sq-last-move {
+  background-color: rgba(247, 247, 105, 0.45) !important;
+}
+
+.sq-check {
+  background: radial-gradient(circle at center, rgba(239, 68, 68, 0.95) 0%, rgba(220, 38, 38, 0.75) 55%, transparent 100%) !important;
+  animation: check-pulse 1.6s ease-in-out infinite alternate;
+}
+
+@keyframes check-pulse {
+  0% { transform: scale(1); filter: brightness(1); }
+  100% { transform: scale(1.02); filter: brightness(1.15); }
+}
+
+/* ─── Move Hints ────────────────────────────────────────────────────────────── */
+.move-dot {
+  width: calc(var(--square-size) * 0.32);
+  height: calc(var(--square-size) * 0.32);
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.3);
+  pointer-events: none;
+  z-index: 10;
+  transition: transform 0.15s ease;
+}
+
+.chess-square:hover .move-dot {
+  transform: scale(1.25);
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.capture-ring {
+  width: calc(var(--square-size) * 0.88);
+  height: calc(var(--square-size) * 0.88);
+  border-radius: 50%;
+  border: calc(var(--square-size) * 0.08) solid rgba(15, 23, 42, 0.38);
+  pointer-events: none;
+  z-index: 10;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.chess-square:hover .capture-ring {
+  transform: scale(1.06);
+  border-color: rgba(239, 68, 68, 0.65);
+}
+
+/* ─── Chess Pieces ──────────────────────────────────────────────────────────── */
+.piece-w {
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9), 0 0 1px #000;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.35));
+  transition: transform 0.12s ease;
+}
+
+.piece-b {
+  color: #171717;
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.22);
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
+  transition: transform 0.12s ease;
+}
+
+.chess-square:active .piece-w,
+.chess-square:active .piece-b {
+  transform: scale(0.92);
+}
+
+/* ─── Animated Moving Ghost Piece ───────────────────────────────────────────── */
+.moving-piece-clone {
+  position: absolute;
+  z-index: 40;
+  pointer-events: none;
+  font-size: calc(var(--square-size) * 0.68);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--square-size);
+  height: var(--square-size);
+  transition: transform 180ms cubic-bezier(0.25, 1, 0.5, 1);
+  will-change: transform;
+}
+
+/* ─── Digital Clocks & Timer Warnings ───────────────────────────────────────── */
+.clock-danger {
+  color: #ef4444 !important;
+  border-color: rgba(239, 68, 68, 0.5) !important;
+  animation: clock-tick 1s ease-in-out infinite;
+}
+
+@keyframes clock-tick {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.75; transform: scale(0.98); }
+}
+
+/* ─── Toast Notifications ───────────────────────────────────────────────────── */
+#toast-container {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: min(90vw, 380px);
+  pointer-events: none;
+}
+
+.toast-item {
+  pointer-events: auto;
+  animation: toast-in 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.toast-item.toast-out {
+  animation: toast-out 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes toast-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.94);
+  }
+}
+
+/* ─── Modal Transitions ─────────────────────────────────────────────────────── */
+.modal-backdrop {
+  animation: modal-bg-fade 0.18s ease-out forwards;
+}
+
+.modal-content {
+  animation: modal-card-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes modal-bg-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modal-card-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* ─── Captured Pieces Tray ──────────────────────────────────────────────────── */
+.captured-tray {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  min-height: 1.25rem;
+  gap: 1px;
+}
+
+.captured-piece-mini {
+  font-size: 0.95rem;
+  line-height: 1;
+  opacity: 0.85;
+}
+
+/* ─── Scrollbar Customization ───────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #090d16;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}

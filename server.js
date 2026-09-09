@@ -30,7 +30,7 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "https://cdn.tailwindcss.com"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
       scriptSrcAttr: ["'unsafe-inline'"], // needed for onclick/onsubmit handlers in HTML
       styleSrc: ["'self'", "'unsafe-inline'"],
       connectSrc: ["'self'", "ws:", "wss:"],
