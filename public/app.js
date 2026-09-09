@@ -403,9 +403,135 @@ function renderTray(el, pieceTypes) {
   }
 }
 
-// ─── Premove & Virtual Board Helpers ──────────────────────────────────────────
+// ─── Premove & Virtual Board Helpers (chess.com-style) ───────────────────────
 function getActiveBoard() {
   return virtualBoardState || boardState;
+}
+
+function clearPremove() {
+  premoveQueue = [];
+  virtualBoardState = null;
+  premoveSelectedSq = null;
+  renderBoard();
+}
+const cancelPremoves = clearPremove;
+
+function boardToFen(bState, turnColor = 'w', fenSource = currentFen) {
+  const rows = [];
+  for (let r = 0; r < 8; r++) {
+    let empty = 0;
+    let row = '';
+    for (let c = 0; c < 8; c++) {
+      const p = bState[r][c];
+      if (!p) {
+        empty++;
+      } else {
+        if (empty > 0) { row += empty; empty = 0; }
+        row += p;
+      }
+    }
+    if (empty > 0) row += empty;
+    rows.push(row);
+  }
+  const castlingPart = (fenSource && fenSource.split(' ')[2]) || '-';
+  const epPart = (fenSource && fenSource.split(' ')[3]) || '-';
+  return rows.join('/') + ' ' + turnColor + ' ' + castlingPart + ' ' + epPart + ' 0 1';
+}
+
+function getHypotheticalChess(bState, playerColor, fenSource = currentFen) {
+  const turn = playerColor === 'white' ? 'w' : 'b';
+  const fen = boardToFen(bState, turn, fenSource);
+  const ch = new Chess();
+  try {
+    ch.load(fen);
+  } catch (e) {
+    ch.reset();
+  }
+  return ch;
+}
+
+// Queue-time validation: checks basic movement pattern and ensures target is NOT own piece
+function getPremoveMoveShapeTargets(fromR, fromC, bState = getActiveBoard(), playerColor = myRole) {
+  if (!bState) return [];
+  const p = bState[fromR][fromC];
+  if (!p) return [];
+
+  const isWhite = (p === p.toUpperCase());
+  // Helper to check if target square holds player's own piece
+  const isOwnPiece = (targetPiece) => {
+    if (!targetPiece) return false;
+    return isWhite ? targetPiece === targetPiece.toUpperCase() : targetPiece === targetPiece.toLowerCase();
+  };
+
+  const targets = [];
+  const pieceType = p.toLowerCase();
+
+  if (pieceType === 'p') {
+    const dir = isWhite ? -1 : 1;
+    const startRow = isWhite ? 6 : 1;
+    // Forward 1: destination cannot be own piece
+    const f1 = fromR + dir;
+    if (f1 >= 0 && f1 < 8) {
+      if (!isOwnPiece(bState[f1][fromC])) {
+        targets.push([f1, fromC]);
+      }
+      // Forward 2 from start row: cannot jump if path blocked by own piece
+      const f2 = fromR + 2 * dir;
+      if (fromR === startRow && !isOwnPiece(bState[f1][fromC]) && !isOwnPiece(bState[f2][fromC])) {
+        targets.push([f2, fromC]);
+      }
+      // Diagonal captures: empty square (anticipating capture) or opponent piece, but never own piece
+      for (const dc of [-1, 1]) {
+        const c = fromC + dc;
+        if (c >= 0 && c < 8 && !isOwnPiece(bState[f1][c])) {
+          targets.push([f1, c]);
+        }
+      }
+    }
+  } else if (pieceType === 'n') {
+    const deltas = [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
+    for (const [dr, dc] of deltas) {
+      const nr = fromR + dr, nc = fromC + dc;
+      if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8 && !isOwnPiece(bState[nr][nc])) {
+        targets.push([nr, nc]);
+      }
+    }
+  } else if (['b', 'r', 'q'].includes(pieceType)) {
+    const dirs = [];
+    if (['b', 'q'].includes(pieceType)) dirs.push([-1,-1],[-1,1],[1,-1],[1,1]);
+    if (['r', 'q'].includes(pieceType)) dirs.push([-1,0],[1,0],[0,-1],[0,1]);
+    for (const [dr, dc] of dirs) {
+      let nr = fromR + dr, nc = fromC + dc;
+      while (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
+        const target = bState[nr][nc];
+        if (isOwnPiece(target)) {
+          // Cannot capture or pass through own piece
+          break;
+        }
+        targets.push([nr, nc]);
+        if (target) {
+          // Can capture opponent piece, but ray stops after it
+          break;
+        }
+        nr += dr; nc += dc;
+      }
+    }
+  } else if (pieceType === 'k') {
+    const dirs = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+    for (const [dr, dc] of dirs) {
+      const nr = fromR + dr, nc = fromC + dc;
+      if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8 && !isOwnPiece(bState[nr][nc])) {
+        targets.push([nr, nc]);
+      }
+    }
+    // Castling targets if on starting square
+    if ((isWhite && fromR === 7 && fromC === 4) || (!isWhite && fromR === 0 && fromC === 4)) {
+      if (!isOwnPiece(bState[fromR][5]) && !isOwnPiece(bState[fromR][6])) targets.push([fromR, 6]);
+      if (!isOwnPiece(bState[fromR][3]) && !isOwnPiece(bState[fromR][2]) && !isOwnPiece(bState[fromR][1])) targets.push([fromR, 2]);
+    }
+  }
+
+  return targets;
 }
 
 function applyMoveToVirtualBoard(fromR, fromC, toR, toC, promo) {
@@ -451,13 +577,6 @@ function rebuildVirtualBoard() {
   }
 }
 
-function cancelPremoves() {
-  premoveQueue = [];
-  virtualBoardState = null;
-  premoveSelectedSq = null;
-  renderBoard();
-}
-
 function handlePremoveClick(r, c) {
   const activeBoard = getActiveBoard();
   if (!activeBoard) return;
@@ -465,48 +584,17 @@ function handlePremoveClick(r, c) {
   const isMyPiece = piece && (myRole === 'white' ? piece === piece.toUpperCase() : piece === piece.toLowerCase());
 
   if (premoveSelectedSq) {
+    const [fromR, fromC] = premoveSelectedSq;
+
     // Clicking same square cancels selection
-    if (premoveSelectedSq[0] === r && premoveSelectedSq[1] === c) {
+    if (fromR === r && fromC === c) {
       premoveSelectedSq = null;
       renderBoard();
       return;
     }
 
-    const legals = getPieceMoves(premoveSelectedSq[0], premoveSelectedSq[1], activeBoard);
-    const isTarget = legals.some(t => t[0] === r && t[1] === c);
-
-    if (isTarget) {
-      if (premoveSettings.mode === 'single') {
-        premoveQueue = [];
-        virtualBoardState = null;
-      }
-
-      const curBoard = getActiveBoard();
-      const movingPiece = curBoard[premoveSelectedSq[0]][premoveSelectedSq[1]];
-      const isPawn = movingPiece && movingPiece.toLowerCase() === 'p';
-      const isPromotion = isPawn && (r === 0 || r === 7);
-      const promo = isPromotion ? (premoveSettings.promo || 'q') : undefined;
-
-      const fromAlg = squareToAlg(premoveSelectedSq[0], premoveSelectedSq[1]);
-      const toAlg = squareToAlg(r, c);
-
-      premoveQueue.push({
-        from: [premoveSelectedSq[0], premoveSelectedSq[1]],
-        to: [r, c],
-        fromAlg,
-        toAlg,
-        promotion: promo,
-        piece: movingPiece
-      });
-
-      applyMoveToVirtualBoard(premoveSelectedSq[0], premoveSelectedSq[1], r, c, promo);
-      premoveSelectedSq = null;
-      playSound('move');
-      renderBoard();
-      return;
-    }
-
-    // Reselect another piece
+    // Bug 2 check (a): Destination cannot be player's OWN piece.
+    // If clicking another of player's own pieces, switch selection to that piece!
     if (isMyPiece) {
       premoveSelectedSq = [r, c];
       playSound('move');
@@ -514,57 +602,91 @@ function handlePremoveClick(r, c) {
       return;
     }
 
-    // Click on destination of queued premove cancels that premove
-    const clickedPremoveIndex = premoveQueue.findIndex(pm => pm.to[0] === r && pm.to[1] === c);
-    if (clickedPremoveIndex !== -1) {
-      premoveQueue.splice(clickedPremoveIndex, 1);
-      rebuildVirtualBoard();
+    // Bug 2 check (b): Destination must match piece movement pattern from current square
+    const shapeTargets = getPremoveMoveShapeTargets(fromR, fromC, activeBoard, myRole);
+    const isValidShape = shapeTargets.some(t => t[0] === r && t[1] === c);
+
+    if (isValidShape) {
+      if (premoveSettings.mode === 'single') {
+        premoveQueue = [];
+        virtualBoardState = null;
+      }
+
+      const curBoard = getActiveBoard();
+      const movingPiece = curBoard[fromR][fromC];
+      const isPawn = movingPiece && movingPiece.toLowerCase() === 'p';
+      const isPromotion = isPawn && (r === 0 || r === 7);
+      const promo = isPromotion ? (premoveSettings.promo || 'q') : undefined;
+
+      const fromAlg = squareToAlg(fromR, fromC);
+      const toAlg = squareToAlg(r, c);
+
+      premoveQueue.push({
+        from: [fromR, fromC],
+        to: [r, c],
+        fromAlg,
+        toAlg,
+        promotion: promo,
+        piece: movingPiece
+      });
+
+      applyMoveToVirtualBoard(fromR, fromC, r, c, promo);
       premoveSelectedSq = null;
+      playSound('move');
       renderBoard();
       return;
     }
 
-    premoveSelectedSq = null;
-    renderBoard();
+    // If check fails: do NOT queue the premove at all!
+    // Reject the click and leave the previous selection state as if no premove input happened.
     return;
   }
 
-  // No piece selected yet
+  // No piece selected yet:
   if (isMyPiece) {
     premoveSelectedSq = [r, c];
     playSound('move');
     renderBoard();
-  } else {
-    const clickedPremoveIndex = premoveQueue.findIndex(pm => pm.to[0] === r && pm.to[1] === c);
-    if (clickedPremoveIndex !== -1) {
-      premoveQueue.splice(clickedPremoveIndex, 1);
-      rebuildVirtualBoard();
-      renderBoard();
-    }
   }
 }
 
-function executeNextPremove() {
+// Re-validate and execute next premove on turn arrival (Bug 1)
+function processPremoveOnTurnArrival() {
   if (premoveQueue.length === 0 || currentTurn !== myRole || isGameOver) {
-    virtualBoardState = null;
-    renderBoard();
+    clearPremove();
     return;
   }
 
-  const next = premoveQueue.shift();
-  // Validate move against authoritative boardState
-  const legalMoves = getPieceMoves(next.from[0], next.from[1], boardState);
-  const isLegal = legalMoves.some(t => t[0] === next.to[0] && t[1] === next.to[1]);
+  // PEEK the next premove to execute (do NOT shift yet!)
+  const next = premoveQueue[0];
 
-  if (isLegal) {
-    rebuildVirtualBoard();
-    renderBoard();
+  let isLegal = false;
+  let promo = next.promotion;
 
+  try {
+    const ch = new Chess(currentFen);
     const movingPiece = boardState[next.from[0]][next.from[1]];
     const isPawn = movingPiece && movingPiece.toLowerCase() === 'p';
     const isPromotion = isPawn && (next.to[0] === 0 || next.to[0] === 7);
-    const promo = isPromotion ? (next.promotion || premoveSettings.promo || 'q') : undefined;
+    if (isPromotion && !promo) {
+      promo = premoveSettings.promo || 'q';
+    }
 
+    // Verify full legality in the authoritative position
+    const moveResult = ch.move({
+      from: next.fromAlg,
+      to: next.toAlg,
+      promotion: promo
+    });
+
+    isLegal = !!moveResult;
+  } catch (e) {
+    isLegal = false;
+  }
+
+  if (isLegal) {
+    // If it's still legal, execute it (submit to server)
+    // Keep highlight/ghost active until resolution (success or server rejection)
     socket.emit('make_move', {
       roomId: currentRoom,
       from: next.fromAlg,
@@ -572,9 +694,12 @@ function executeNextPremove() {
       promotion: promo,
       playerToken
     });
+    rebuildVirtualBoard();
+    renderBoard();
   } else {
-    // Silent discard per chess.com rules
-    cancelPremoves();
+    // If it's no longer legal, IMMEDIATELY and UNCONDITIONALLY clear the premove state
+    // AND the highlight/ghost rendering
+    clearPremove();
   }
 }
 
@@ -583,97 +708,21 @@ function getPieceMoves(r, c, bState = getActiveBoard()) {
   if (!bState) return [];
   const p = bState[r][c];
   if (!p) return [];
-  const isWhite = p === p.toUpperCase();
-  const moves = [];
 
-  // Pawns
-  if (p.toLowerCase() === 'p') {
-    const dir = isWhite ? -1 : 1;
-    const startRow = isWhite ? 6 : 1;
-    if (r + dir >= 0 && r + dir < 8 && !bState[r + dir][c]) {
-      moves.push([r + dir, c]);
-      if (r === startRow && !bState[r + 2 * dir][c]) {
-        moves.push([r + 2 * dir, c]);
-      }
-    }
-    for (const dc of [-1, 1]) {
-      const nr = r + dir, nc = c + dc;
-      if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-        const target = bState[nr][nc];
-        if (target && (isWhite ? target === target.toLowerCase() : target === target.toUpperCase())) {
-          moves.push([nr, nc]);
-        }
-      }
-    }
-    // En Passant
-    const epTarget = getEnPassantTarget();
-    if (epTarget) {
-      const [epR, epC] = epTarget;
-      if (epR === r + dir && Math.abs(epC - c) === 1) {
-        moves.push([epR, epC]);
-      }
+  // When it's the active player's turn on the authoritative board:
+  if (typeof Chess !== 'undefined' && currentFen && bState === boardState) {
+    try {
+      const ch = new Chess(currentFen);
+      const fromAlg = squareToAlg(r, c);
+      const moves = ch.moves({ square: fromAlg, verbose: true });
+      return moves.map(m => algToSquare(m.to));
+    } catch (e) {
+      // fallback to shape generator
     }
   }
 
-  // Knights
-  if (p.toLowerCase() === 'n') {
-    const deltas = [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
-    for (const [dr, dc] of deltas) {
-      const nr = r + dr, nc = c + dc;
-      if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-        const target = bState[nr][nc];
-        if (!target || (isWhite ? target === target.toLowerCase() : target === target.toUpperCase())) {
-          moves.push([nr, nc]);
-        }
-      }
-    }
-  }
-
-  // Bishops / Rooks / Queens
-  if (['b', 'r', 'q'].includes(p.toLowerCase())) {
-    const dirs = [];
-    if (['b', 'q'].includes(p.toLowerCase())) dirs.push([-1,-1],[-1,1],[1,-1],[1,1]);
-    if (['r', 'q'].includes(p.toLowerCase())) dirs.push([-1,0],[1,0],[0,-1],[0,1]);
-    for (const [dr, dc] of dirs) {
-      let nr = r + dr, nc = c + dc;
-      while (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-        const target = bState[nr][nc];
-        if (!target) {
-          moves.push([nr, nc]);
-        } else {
-          if (isWhite ? target === target.toLowerCase() : target === target.toUpperCase()) {
-            moves.push([nr, nc]);
-          }
-          break;
-        }
-        nr += dr; nc += dc;
-      }
-    }
-  }
-
-  // King
-  if (p.toLowerCase() === 'k') {
-    const dirs = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
-    for (const [dr, dc] of dirs) {
-      const nr = r + dr, nc = c + dc;
-      if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-        const target = bState[nr][nc];
-        if (!target || (isWhite ? target === target.toLowerCase() : target === target.toUpperCase())) {
-          moves.push([nr, nc]);
-        }
-      }
-    }
-    // Castling hints
-    if (isWhite && r === 7 && c === 4) {
-      if (!bState[7][5] && !bState[7][6]) moves.push([7, 6]);
-      if (!bState[7][3] && !bState[7][2] && !bState[7][1]) moves.push([7, 2]);
-    } else if (!isWhite && r === 0 && c === 4) {
-      if (!bState[0][5] && !bState[0][6]) moves.push([0, 6]);
-      if (!bState[0][3] && !bState[0][2] && !bState[0][1]) moves.push([0, 2]);
-    }
-  }
-
-  return moves;
+  // During opponent's turn (premove) or on virtual board:
+  return getPremoveMoveShapeTargets(r, c, bState, myRole);
 }
 
 // ─── Pawn Promotion Picker Modal (Fix #14) ────────────────────────────────────
@@ -758,7 +807,7 @@ function renderBoard() {
   if (isMyTurn && selectedSq) {
     legalTargets = getPieceMoves(selectedSq[0], selectedSq[1], activeBoard);
   } else if (canPremove && premoveSelectedSq) {
-    legalTargets = getPieceMoves(premoveSelectedSq[0], premoveSelectedSq[1], activeBoard);
+    legalTargets = getPremoveMoveShapeTargets(premoveSelectedSq[0], premoveSelectedSq[1], activeBoard, myRole);
   }
 
   for (let vr = 0; vr < 8; vr++) {
@@ -1157,7 +1206,7 @@ socket.on('move_made', (data) => {
 
     // Trigger Game Over if ended
     if (data.isGameOver) {
-      cancelPremoves();
+      clearPremove();
       renderBoard();
       if (data.gameOverData) {
         handleGameOverState(data.gameOverData);
@@ -1165,11 +1214,24 @@ socket.on('move_made', (data) => {
       return;
     }
 
+    // Check if incoming move resolves our queued premove (server confirmed the move we submitted)
+    if (premoveQueue.length > 0 && premoveQueue[0].fromAlg === data.move.from && premoveQueue[0].toAlg === data.move.to) {
+      premoveQueue.shift();
+    }
+
     // Premove execution on turn arrival
-    if (currentTurn === myRole && premoveQueue.length > 0) {
-      executeNextPremove();
+    if (currentTurn === myRole) {
+      if (premoveQueue.length > 0) {
+        processPremoveOnTurnArrival();
+      } else {
+        clearPremove();
+      }
     } else {
-      virtualBoardState = null;
+      if (premoveQueue.length > 0) {
+        rebuildVirtualBoard();
+      } else {
+        virtualBoardState = null;
+      }
       renderBoard();
     }
   });
