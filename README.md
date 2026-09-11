@@ -122,17 +122,37 @@ npm run bot
 
 #### Deploying as a Background Worker on Render
 Render Web Services require listening on an incoming HTTP `$PORT`. Because the Telegram bot uses long-polling without needing an HTTP port, deploy it as an isolated **Background Worker**:
-1. On [Render](https://dashboard.render.com), click **New +** > **Background Worker**.
-2. Connect the same repository.
-3. Configure the settings:
+
+##### Method A: Docker Deployment (Recommended)
+1. On [Render Dashboard](https://dashboard.render.com), click **New +** > **Background Worker**.
+2. Connect your GitHub repository.
+3. Configure settings:
    * **Name:** `chess-telegram-bot`
-   * **Environment:** `Node`
-   * **Build Command:** `npm install`
-   * **Start Command:** `npm run bot`
-4. Set the Environment Variables:
+   * **Branch:** `master`
+   * **Runtime / Environment:** `Docker`
+   * **Dockerfile Path:** `Dockerfile.bot`
+   * **Docker Context:** `.`
+4. Under **Environment Variables**, add:
    * `BOT_TOKEN`: Your API token from `@BotFather`.
    * `WEB_APP_URL`: Your deployed web service URL (e.g. `https://chess-j33o.onrender.com/`).
-5. Click **Create Background Worker**. The bot starts polling and handles `/start` and `/help` seamlessly.
+5. Click **Create Background Worker**. The bot worker will spin up and handle Telegram commands.
+
+##### Method B: Native Node Deployment
+1. On Render, click **New +** > **Background Worker**.
+2. Set **Environment:** `Node`, **Build Command:** `npm install`, **Start Command:** `npm run bot`.
+3. Add the same `BOT_TOKEN` and `WEB_APP_URL` environment variables.
+
+---
+
+### 6. Web Service Configuration on Render
+For the primary web service running `server.js`:
+* **Runtime:** `Docker` (using default `Dockerfile`) or `Node` (`npm start`)
+* **Health Check Path:** `/health` (returns HTTP 200 `{ status: "ok" }`)
+* **Environment Variables:**
+  * `PORT`: `3000` (or auto-assigned by Render)
+  * `NODE_ENV`: `production`
+  * `BOT_TOKEN`: Same API token from `@BotFather` (enables server-side `initData` signature validation)
+
 
 ---
 

@@ -11,3 +11,15 @@ services:
       - PORT=3000
       - HOST=0.0.0.0
       - NODE_ENV=production
+
+  chess-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    container_name: chess-live-bot
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - BOT_TOKEN=${BOT_TOKEN}
+      - WEB_APP_URL=${WEB_APP_URL}
+

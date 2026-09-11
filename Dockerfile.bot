@@ -1,0 +1,22 @@
+# Production Dockerfile for Chess Live Telegram Bot Worker
+FROM node:22-alpine AS runner
+
+WORKDIR /app
+
+# Install production dependencies
+COPY package*.json ./
+RUN npm ci --only=production
+
+# Copy bot application file
+COPY bot.js ./
+
+# Set production environment
+ENV NODE_ENV=production
+
+# Run as non-root user for security
+RUN addgroup -S chess && adduser -S chess -G chess
+RUN chown -R chess:chess /app
+USER chess
+
+# Run Telegram bot worker process
+CMD ["node", "bot.js"]
