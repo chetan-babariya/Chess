@@ -1116,4 +1116,12 @@ server.listen(PORT, HOST, () => {
   }
   console.log(`> Room TTL:        ${ROOM_TTL_MS / 1000}s | Max rooms/IP: ${MAX_ROOMS_PER_IP}`);
   console.log(`=================================================\n`);
+
+  // Initialize embedded Telegram Bot (if configured)
+  try {
+    const { initTelegramBot } = require('./bot');
+    initTelegramBot();
+  } catch (botErr) {
+    console.warn('⚠️ Telegram bot initialization notice:', botErr.message);
+  }
 });

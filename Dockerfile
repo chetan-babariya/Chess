@@ -9,6 +9,7 @@ RUN npm ci --only=production
 
 # Copy application files
 COPY server.js ./
+COPY bot.js ./
 COPY public ./public
 
 # Set production environment

@@ -1,76 +1,13 @@
 /**
  * Telegram Bot for Chess Live Mini App
- * Supports both:
- * 1. Render Background Worker (pure long polling)
- * 2. Render Web Service (long polling + minimal HTTP server to satisfy $PORT binding)
+ * Designed to be embedded directly inside server.js (single Node.js process on Render)
+ * or run standalone.
  */
 
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
-const http = require('http');
 const path = require('path');
 const fs = require('fs');
-
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const WEB_APP_URL = process.env.WEB_APP_URL || 'https://chess-j33o.onrender.com/';
-const PORT = process.env.PORT;
-
-if (!BOT_TOKEN) {
-  console.error('\n❌ ERROR: BOT_TOKEN is not set in environment variables!');
-  console.error('Please set BOT_TOKEN in your .env or hosting environment.\n');
-  process.exit(1);
-}
-
-// ─── Dual-Mode Fallback: HTTP Server for Render Web Service Tier ───────────────
-// If PORT is provided (e.g. deployed as a free Render Web Service instead of
-// Background Worker), spin up a minimal health server to satisfy Render's port check.
-if (PORT) {
-  const healthServer = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Chess Live Telegram Bot OK');
-  });
-
-  healthServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`📡 Fallback HTTP server listening on port ${PORT} (satisfies Render Web Service port-binding)`);
-  });
-}
-
-// Clean trailing slash for URL concatenation
-const cleanWebAppUrl = WEB_APP_URL.replace(/\/+$/, '');
-const PREVIEW_IMAGE_URL = process.env.PREVIEW_IMAGE_URL || `${cleanWebAppUrl}/preview.png`;
-
-// ─── Initialize Telegram Bot with Polling (v0.66 API) ──────────────────────────
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
-
-console.log('=================================================');
-console.log('🤖 CHESS LIVE TELEGRAM BOT STARTED!');
-console.log('-------------------------------------------------');
-console.log(`> Web App URL:    ${WEB_APP_URL}`);
-console.log(`> Banner URL:     ${PREVIEW_IMAGE_URL}`);
-if (PORT) {
-  console.log(`> Service Mode:   Web Service (Port ${PORT})`);
-} else {
-  console.log(`> Service Mode:   Background Worker (No Port)`);
-}
-console.log('=================================================\n');
-
-// ─── Programmatic Command Menu Registration ───────────────────────────────────
-bot.setMyCommands([
-  {
-    command: 'start',
-    description: 'Play Chess Live inside Telegram'
-  },
-  {
-    command: 'help',
-    description: 'How to play and game rules'
-  }
-])
-  .then(() => {
-    console.log('✅ Telegram bot commands registered successfully with Telegram API');
-  })
-  .catch((err) => {
-    console.error('❌ Failed to register Telegram bot commands:', err.message);
-  });
 
 // ─── Help Message Text ────────────────────────────────────────────────────────
 function getHelpText() {
@@ -96,121 +33,185 @@ function getHelpText() {
   );
 }
 
-// ─── /start Command ───────────────────────────────────────────────────────────
-bot.onText(/^\/start(?:@\w+)?$/, async (msg) => {
-  const chatId = msg.chat.id;
-  const firstName = msg.from?.first_name || 'there';
+/**
+ * Initialize Telegram Bot
+ * Safe for server.js: does not exit process or crash if BOT_TOKEN is missing or fails.
+ */
+function initTelegramBot() {
+  const BOT_TOKEN = process.env.BOT_TOKEN;
+  const WEB_APP_URL = process.env.WEB_APP_URL || 'https://chess-j33o.onrender.com/';
 
-  const caption =
-    `♟️ *Welcome to Chess Live, ${firstName}!*\n\n` +
-    `Play real-time multiplayer chess with friends or challenge the built-in AI engine directly inside Telegram.\n\n` +
-    `• ⚔️ *Real-Time PvP Matchmaking*\n` +
-    `• 🤖 *Minimax AI Engine*\n` +
-    `• ⏱️ *Rapid, Blitz, Bullet & Casual Clocks*\n` +
-    `• 💬 *Live Room Chat & Spectator Mode*\n` +
-    `• ⚡ *chess.com-style Premoves*\n\n` +
-    `Tap the button below to launch the game!`;
+  if (!BOT_TOKEN) {
+    console.log('ℹ️  Telegram Bot disabled (BOT_TOKEN not provided in environment).');
+    return null;
+  }
 
-  const keyboard = {
-    inline_keyboard: [
-      [
-        {
-          text: '♟️ Play Chess Live',
-          web_app: { url: WEB_APP_URL }
-        }
-      ],
-      [
-        {
-          text: '📖 How to Play & Guide',
-          callback_data: 'cmd_help'
-        }
-      ]
-    ]
-  };
+  // Clean trailing slash for URL concatenation
+  const cleanWebAppUrl = WEB_APP_URL.replace(/\/+$/, '');
+  const PREVIEW_IMAGE_URL = process.env.PREVIEW_IMAGE_URL || `${cleanWebAppUrl}/preview.png`;
 
   try {
-    // Attempt sending with remote HTTPS image URL
-    await bot.sendPhoto(chatId, PREVIEW_IMAGE_URL, {
-      caption,
-      parse_mode: 'Markdown',
-      reply_markup: keyboard
-    });
-  } catch (err) {
-    console.warn('Could not send remote photo, attempting local fallback or text fallback:', err.message);
-    const localImg = path.join(__dirname, 'public', 'preview.png');
-    if (fs.existsSync(localImg)) {
+    // Initialize Telegram Bot with polling (v0.66 API)
+    const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+
+    console.log('=================================================');
+    console.log('🤖 CHESS LIVE TELEGRAM BOT INITIALIZED (EMBEDDED)');
+    console.log('-------------------------------------------------');
+    console.log(`> Web App URL:    ${WEB_APP_URL}`);
+    console.log(`> Banner URL:     ${PREVIEW_IMAGE_URL}`);
+    console.log('=================================================\n');
+
+    // ─── Programmatic Command Menu Registration ───────────────────────────────
+    bot.setMyCommands([
+      {
+        command: 'start',
+        description: 'Play Chess Live inside Telegram'
+      },
+      {
+        command: 'help',
+        description: 'How to play and game rules'
+      }
+    ])
+      .then(() => {
+        console.log('✅ Telegram bot commands registered successfully with Telegram API');
+      })
+      .catch((err) => {
+        console.error('❌ Failed to register Telegram bot commands:', err.message);
+      });
+
+    // ─── Configure Persistent Chat Menu Button ────────────────────────────────
+    bot.setChatMenuButton({
+      menu_button: JSON.stringify({
+        type: 'web_app',
+        text: 'Play Chess',
+        web_app: { url: WEB_APP_URL }
+      })
+    })
+      .then(() => {
+        console.log('✅ Telegram chat menu button configured to launch Web App');
+      })
+      .catch((err) => {
+        console.warn('⚠️ Telegram chat menu button notice:', err.message);
+      });
+
+    // ─── /start Command ───────────────────────────────────────────────────────
+    bot.onText(/^\/start(?:@\w+)?$/, async (msg) => {
+      const chatId = msg.chat.id;
+      const firstName = msg.from?.first_name || 'there';
+
+      const caption =
+        `♟️ *Welcome to Chess Live, ${firstName}!*\n\n` +
+        `Play real-time multiplayer chess with friends or challenge the built-in AI engine directly inside Telegram.\n\n` +
+        `• ⚔️ *Real-Time PvP Matchmaking*\n` +
+        `• 🤖 *Minimax AI Engine*\n` +
+        `• ⏱️ *Rapid, Blitz, Bullet & Casual Clocks*\n` +
+        `• 💬 *Live Room Chat & Spectator Mode*\n` +
+        `• ⚡ *chess.com-style Premoves*\n\n` +
+        `Tap the button below to launch the game!`;
+
+      const keyboard = {
+        inline_keyboard: [
+          [
+            {
+              text: '♟️ Play Chess Live',
+              web_app: { url: WEB_APP_URL }
+            }
+          ],
+          [
+            {
+              text: '📖 How to Play & Guide',
+              callback_data: 'cmd_help'
+            }
+          ]
+        ]
+      };
+
       try {
-        await bot.sendPhoto(chatId, localImg, {
+        await bot.sendPhoto(chatId, PREVIEW_IMAGE_URL, {
           caption,
           parse_mode: 'Markdown',
           reply_markup: keyboard
         });
-        return;
-      } catch (localErr) {
-        console.warn('Local photo send failed:', localErr.message);
-      }
-    }
-
-    // Text fallback if image cannot be loaded
-    bot.sendMessage(chatId, caption, {
-      parse_mode: 'Markdown',
-      reply_markup: keyboard
-    });
-  }
-});
-
-// ─── /help Command ────────────────────────────────────────────────────────────
-bot.onText(/^\/help(?:@\w+)?$/, (msg) => {
-  const chatId = msg.chat.id;
-  bot.sendMessage(chatId, getHelpText(), {
-    parse_mode: 'Markdown',
-    reply_markup: {
-      inline_keyboard: [
-        [
-          {
-            text: '♟️ Launch Chess Live',
-            web_app: { url: WEB_APP_URL }
+      } catch (err) {
+        console.warn('Could not send remote photo, attempting local fallback:', err.message);
+        const localImg = path.join(__dirname, 'public', 'preview.png');
+        if (fs.existsSync(localImg)) {
+          try {
+            await bot.sendPhoto(chatId, localImg, {
+              caption,
+              parse_mode: 'Markdown',
+              reply_markup: keyboard
+            });
+            return;
+          } catch (localErr) {
+            console.warn('Local photo send failed:', localErr.message);
           }
-        ]
-      ]
-    }
-  });
-});
+        }
 
-// ─── Callback Queries (Inline Buttons) ────────────────────────────────────────
-bot.on('callback_query', (query) => {
-  const chatId = query.message?.chat?.id;
-  if (!chatId) return;
-
-  if (query.data === 'cmd_help') {
-    bot.answerCallbackQuery(query.id);
-    bot.sendMessage(chatId, getHelpText(), {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [
-          [
-            {
-              text: '♟️ Launch Chess Live',
-              web_app: { url: WEB_APP_URL }
-            }
-          ]
-        ]
+        // Text fallback if image cannot be loaded
+        bot.sendMessage(chatId, caption, {
+          parse_mode: 'Markdown',
+          reply_markup: keyboard
+        });
       }
     });
+
+    // ─── /help Command ────────────────────────────────────────────────────────
+    bot.onText(/^\/help(?:@\w+)?$/, (msg) => {
+      const chatId = msg.chat.id;
+      bot.sendMessage(chatId, getHelpText(), {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: '♟️ Launch Chess Live',
+                web_app: { url: WEB_APP_URL }
+              }
+            ]
+          ]
+        }
+      });
+    });
+
+    // ─── Callback Queries (Inline Buttons) ────────────────────────────────────
+    bot.on('callback_query', (query) => {
+      const chatId = query.message?.chat?.id;
+      if (!chatId) return;
+
+      if (query.data === 'cmd_help') {
+        bot.answerCallbackQuery(query.id).catch(() => {});
+        bot.sendMessage(chatId, getHelpText(), {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: '♟️ Launch Chess Live',
+                  web_app: { url: WEB_APP_URL }
+                }
+              ]
+            ]
+          }
+        });
+      }
+    });
+
+    // ─── Polling Error Logging ────────────────────────────────────────────────
+    bot.on('polling_error', (error) => {
+      console.error('❌ [Telegram Bot Polling Error]:', error.code || '', error.message || error);
+    });
+
+    return bot;
+  } catch (err) {
+    console.error('❌ [Telegram Bot Init Error]:', err.message || err);
+    return null;
   }
-});
+}
 
-// ─── Polling Error Logging (Log All Errors, Including EFATAL) ─────────────────
-bot.on('polling_error', (error) => {
-  console.error('❌ [Telegram Bot Polling Error]:', error.code || '', error.message || error);
-});
+// Auto-initialize if run directly via `node bot.js`
+if (require.main === module) {
+  initTelegramBot();
+}
 
-// ─── Process Crash Containment ────────────────────────────────────────────────
-process.on('uncaughtException', (err) => {
-  console.error('❌ [FATAL] Uncaught Exception in Bot:', err);
-});
-
-process.on('unhandledRejection', (reason) => {
-  console.error('❌ [FATAL] Unhandled Rejection in Bot:', reason);
-});
-
+module.exports = { initTelegramBot };
