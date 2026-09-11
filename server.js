@@ -15,6 +15,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const MAX_ROOMS_PER_IP = parseInt(process.env.MAX_ROOMS_PER_IP, 10) || 5;
 const ROOM_TTL_MS = parseInt(process.env.ROOM_TTL_MS, 10) || 3600000; // 1 hour default
+const BOT_TOKEN = process.env.BOT_TOKEN || null;
 
 // Parse allowed origins from env, fallback to permissive in dev
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
@@ -30,7 +31,7 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "https://telegram.org"],
       scriptSrcAttr: ["'unsafe-inline'"], // needed for onclick/onsubmit handlers in HTML
       styleSrc: ["'self'", "'unsafe-inline'"],
       connectSrc: ["'self'", "ws:", "wss:"],
@@ -52,6 +53,73 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Socket.io with same CORS policy
 const io = new Server(server, {
   cors: corsOptions
+});
+
+// ─── Telegram Mini App Verification (HMAC-SHA256) ─────────────────────────────
+function verifyTelegramWebAppData(initData, botToken) {
+  if (!initData || typeof initData !== 'string' || !botToken) return null;
+  try {
+    const params = new URLSearchParams(initData);
+    const hash = params.get('hash');
+    if (!hash) return null;
+
+    params.delete('hash');
+    params.sort();
+
+    const checkArr = [];
+    for (const [k, v] of params.entries()) {
+      checkArr.push(`${k}=${v}`);
+    }
+    const dataCheckString = checkArr.join('\n');
+
+    const secretKey = crypto
+      .createHmac('sha256', 'WebAppData')
+      .update(botToken)
+      .digest();
+
+    const calculatedHash = crypto
+      .createHmac('sha256', secretKey)
+      .update(dataCheckString)
+      .digest('hex');
+
+    if (calculatedHash.length !== hash.length) return null;
+    const isMatch = crypto.timingSafeEqual(
+      Buffer.from(calculatedHash, 'utf-8'),
+      Buffer.from(hash, 'utf-8')
+    );
+
+    if (!isMatch) return null;
+
+    const authDate = parseInt(params.get('auth_date'), 10);
+    if (authDate && (Date.now() / 1000 - authDate > 86400)) {
+      return null; // Expired (older than 24 hours)
+    }
+
+    const userRaw = params.get('user');
+    if (userRaw) {
+      return JSON.parse(userRaw);
+    }
+    return { auth_date: authDate };
+  } catch (err) {
+    return null;
+  }
+}
+
+// Telegram Mini App Socket.io auth middleware (progressive enhancement)
+io.use((socket, next) => {
+  try {
+    const initData = socket.handshake.auth?.initData;
+    if (initData && BOT_TOKEN) {
+      const tgUser = verifyTelegramWebAppData(initData, BOT_TOKEN);
+      if (tgUser) {
+        socket.telegramUser = tgUser;
+      }
+    }
+  } catch (err) {
+    // Non-fatal — plain web connections proceed without telegramUser
+  }
+  // Critically: always call next() so non-Telegram browsers/flows are completely unaffected
+  next();
 });
 
 // ─── In-memory Room Store ─────────────────────────────────────────────────────
@@ -428,7 +496,11 @@ io.on('connection', (socket) => {
 
     let role = 'spectator';
     let token = (typeof playerToken === 'string' && playerToken) ? playerToken : crypto.randomUUID();
-    const rawName = (typeof playerName === 'string' ? playerName : '').trim().substring(0, 24);
+    // Telegram Mini App integration: prefer verified Telegram first_name when manual input is absent
+    const tgFirstName = socket.telegramUser?.first_name ? String(socket.telegramUser.first_name).trim() : null;
+    const rawName = (typeof playerName === 'string' && playerName.trim())
+      ? playerName.trim().substring(0, 24)
+      : (tgFirstName ? tgFirstName.substring(0, 24) : '');
     const cleanName = sanitize(rawName || `Player-${socket.id.substring(0, 4)}`);
     let assignedName = cleanName;
 
@@ -934,7 +1006,7 @@ io.on('connection', (socket) => {
       isSpectator = true;
       senderRole = 'spectator';
       const spec = room.spectators.find(s => s.id === socket.id);
-      const baseName = spec ? spec.name : 'Spectator';
+      const baseName = spec ? spec.name : (socket.telegramUser?.first_name ? sanitize(socket.telegramUser.first_name) : 'Spectator');
       senderName = `${baseName} (Spectator)`;
     }
 

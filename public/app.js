@@ -49,8 +49,13 @@ const SYMBOLS = {
 
 const PIECE_VALS = { 'p': 1, 'n': 3, 'b': 3, 'r': 5, 'q': 9, 'k': 0 };
 
-// ─── Client State ─────────────────────────────────────────────────────────────
-const socket = io();
+// ─── Client State & Socket.io Connection ──────────────────────────────────────
+const tgWebApp = (typeof window !== 'undefined' && window.Telegram?.WebApp) ? window.Telegram.WebApp : null;
+const socket = io({
+  auth: {
+    initData: tgWebApp?.initData || null
+  }
+});
 let currentRoom = null;
 let myRole = 'spectator'; // 'white', 'black', 'spectator'
 let playerToken = null; // Secret session token
@@ -1132,6 +1137,14 @@ socket.on('game_init', (data) => {
   document.getElementById('game-screen').classList.remove('hidden');
   document.getElementById('nav-share-btn').classList.remove('hidden');
 
+  // Telegram Mini App: update native controls for in-game screen
+  if (window.Telegram?.WebApp) {
+    try {
+      window.Telegram.WebApp.MainButton.hide();
+      window.Telegram.WebApp.BackButton.show();
+    } catch (e) {}
+  }
+
   if (data.playerName) {
     myName = data.playerName;
   }
@@ -1476,11 +1489,17 @@ function switchLobbyTab(tab) {
     aiTab.classList.add('hidden');
     btnPvp.className = 'py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white transition shadow-sm cursor-pointer';
     btnAi.className = 'py-2 text-xs font-semibold rounded-lg text-slate-400 hover:text-white transition cursor-pointer';
+    if (window.Telegram?.WebApp?.MainButton) {
+      window.Telegram.WebApp.MainButton.setText('CREATE GAME ROOM');
+    }
   } else {
     pvpTab.classList.add('hidden');
     aiTab.classList.remove('hidden');
     btnAi.className = 'py-2 text-xs font-bold rounded-lg bg-emerald-600 text-white transition shadow-sm cursor-pointer';
     btnPvp.className = 'py-2 text-xs font-semibold rounded-lg text-slate-400 hover:text-white transition cursor-pointer';
+    if (window.Telegram?.WebApp?.MainButton) {
+      window.Telegram.WebApp.MainButton.setText('START MATCH VS AI');
+    }
   }
 }
 
@@ -1701,15 +1720,190 @@ function appendMoveNotation(san) {
   scrollEl.scrollTop = scrollEl.scrollHeight;
 }
 
+// ─── Telegram Mini App Integration (Progressive Enhancement) ──────────────────
+function isTelegramMiniApp() {
+  const tg = window.Telegram?.WebApp;
+  if (!tg) return false;
+  // Inside Telegram, platform is 'ios'|'android'|'tdesktop'|'macos'|'web'|'weba', or initData is present.
+  // In a standalone browser, telegram-web-app.js leaves platform as 'unknown' and initData as empty string.
+  return !!(tg.initData || (tg.platform && tg.platform !== 'unknown'));
+}
+
+function initTelegramMiniApp() {
+  const tg = window.Telegram?.WebApp;
+  if (!tg || !isTelegramMiniApp()) return;
+
+  try {
+    // 1. Signal readiness to Telegram and expand to full view
+    tg.ready();
+    tg.expand();
+
+    // 2. Apply theme parameters as CSS variables with fallback to existing theme
+    applyTelegramTheme(tg);
+    tg.onEvent('themeChanged', () => applyTelegramTheme(tg));
+
+    // 3. Auto-populate player name input with verified Telegram first_name
+    const tgUser = tg.initDataUnsafe?.user;
+    if (tgUser?.first_name) {
+      const nameInput = document.getElementById('player-name-input');
+      if (nameInput && !nameInput.value.trim()) {
+        nameInput.value = tgUser.first_name.trim();
+      }
+    }
+
+    // 4. Configure native MainButton and BackButton
+    setupTelegramControls(tg);
+  } catch (err) {
+    console.warn('Telegram WebApp init notice:', err);
+  }
+}
+
+function applyTelegramTheme(tg) {
+  if (!tg || !tg.themeParams) return;
+  const tp = tg.themeParams;
+  const root = document.documentElement;
+
+  if (tp.bg_color) {
+    root.style.setProperty('--tg-theme-bg-color', tp.bg_color);
+    document.body.style.backgroundColor = tp.bg_color;
+  }
+  if (tp.text_color) {
+    root.style.setProperty('--tg-theme-text-color', tp.text_color);
+    document.body.style.color = tp.text_color;
+  }
+  if (tp.hint_color) root.style.setProperty('--tg-theme-hint-color', tp.hint_color);
+  if (tp.link_color) root.style.setProperty('--tg-theme-link-color', tp.link_color);
+  if (tp.button_color) root.style.setProperty('--tg-theme-button-color', tp.button_color);
+  if (tp.button_text_color) root.style.setProperty('--tg-theme-button-text-color', tp.button_text_color);
+  if (tp.secondary_bg_color) root.style.setProperty('--tg-theme-secondary-bg-color', tp.secondary_bg_color);
+}
+
+function setupTelegramControls(tg) {
+  if (!tg) return;
+
+  // MainButton wired to primary lobby action
+  tg.MainButton.setParams({
+    text: 'CREATE GAME ROOM',
+    color: tg.themeParams?.button_color || '#4f46e5',
+    text_color: tg.themeParams?.button_text_color || '#ffffff',
+    is_active: true,
+    is_visible: true
+  });
+
+  tg.MainButton.onClick(handleTelegramMainButtonClick);
+
+  // BackButton wired to leave room / back to lobby action
+  tg.BackButton.hide();
+  tg.BackButton.onClick(handleTelegramBackButtonClick);
+
+  // Inside Telegram, hide duplicate HTML create-room button in lobby
+  const htmlCreateBtn = document.getElementById('create-room-btn');
+  if (htmlCreateBtn) {
+    htmlCreateBtn.classList.add('hidden');
+  }
+}
+
+function handleTelegramMainButtonClick() {
+  const lobbyScreen = document.getElementById('lobby-screen');
+  if (lobbyScreen && !lobbyScreen.classList.contains('hidden')) {
+    const aiTab = document.getElementById('tab-content-ai');
+    if (aiTab && !aiTab.classList.contains('hidden')) {
+      startAiGame();
+    } else {
+      createRoom();
+    }
+  }
+}
+
+function handleTelegramBackButtonClick() {
+  leaveRoomToLobby();
+}
+
+function leaveRoomToLobby() {
+  if (currentRoom && !isGameOver && myRole !== 'spectator') {
+    showModal({
+      icon: '🚪',
+      title: 'Leave Match',
+      message: 'Are you sure you want to leave the match and return to the lobby? Your opponent will be awarded victory.',
+      confirmText: 'Leave Match',
+      cancelText: 'Stay',
+      destructive: true,
+      onConfirm: () => {
+        executeReturnToLobby();
+      }
+    });
+  } else {
+    executeReturnToLobby();
+  }
+}
+
+function executeReturnToLobby() {
+  if (currentRoom && !isGameOver && myRole !== 'spectator') {
+    socket.emit('resign', { roomId: currentRoom, playerToken });
+  }
+
+  // Reset in-room state
+  currentRoom = null;
+  myRole = 'spectator';
+  playerToken = null;
+  boardState = null;
+  virtualBoardState = null;
+  premoveQueue = [];
+  selectedSq = null;
+  lastMove = null;
+  inCheck = false;
+  isGameOver = false;
+  moveHistory = [];
+  clocks = { white: 0, black: 0 };
+  currentFen = '';
+  currentPgn = '';
+
+  document.getElementById('game-screen').classList.add('hidden');
+  document.getElementById('lobby-screen').classList.remove('hidden');
+  document.getElementById('nav-share-btn').classList.add('hidden');
+
+  const movesTbody = document.getElementById('moves-tbody');
+  if (movesTbody) movesTbody.innerHTML = '';
+  const chatBox = document.getElementById('chat-messages');
+  if (chatBox) chatBox.innerHTML = '';
+
+  // Update Telegram controls back to Lobby state
+  if (window.Telegram?.WebApp) {
+    try {
+      window.Telegram.WebApp.BackButton.hide();
+      window.Telegram.WebApp.MainButton.setText('CREATE GAME ROOM');
+      window.Telegram.WebApp.MainButton.show();
+    } catch (e) {}
+  }
+}
+
 // ─── Keyboard Accessibility & Initialization ──────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
   loadPremoveSettings();
 
+  // Telegram Mini App progressive enhancement
+  initTelegramMiniApp();
+
+  // Unified room code prefill from query parameter (?room=...) or Telegram start_param (room_<CODE> or <CODE>)
   const params = new URLSearchParams(window.location.search);
-  const roomParam = params.get('room');
+  let roomParam = params.get('room');
+
+  const tgStartParam = window.Telegram?.WebApp?.initDataUnsafe?.start_param;
+  if (!roomParam && tgStartParam) {
+    roomParam = tgStartParam.startsWith('room_') ? tgStartParam.substring(5) : tgStartParam;
+  }
+
   if (roomParam) {
     const input = document.getElementById('join-room-input');
-    if (input) input.value = roomParam.toUpperCase();
+    if (input) {
+      input.value = roomParam.trim().toUpperCase();
+      // If arrived via Telegram deep link start_param, auto-trigger join
+      if (tgStartParam) {
+        setTimeout(() => {
+          joinRoomByCode();
+        }, 250);
+      }
+    }
   }
 
   // Right-click anywhere on the chessboard cancels queued premoves (chess.com-style)

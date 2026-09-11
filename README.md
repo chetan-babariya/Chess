@@ -65,6 +65,39 @@ docker compose up -d
 
 ---
 
+## 📱 Telegram Mini App Setup
+
+You can launch and play Chess Live directly inside Telegram as a Web App (Mini App):
+
+### 1. Create a Telegram Bot via BotFather
+1. In Telegram, search for `@BotFather` and click **Start**.
+2. Send `/newbot` and follow the prompts to choose a display name and username (e.g. `ChessLivePvPBot`).
+3. BotFather will provide an HTTP API token (e.g. `123456789:ABCDefGhIJKlmNoPQRsTUVwxyZ`).
+4. Add this token as the `BOT_TOKEN` environment variable in your production host (or local `.env`):
+   ```env
+   BOT_TOKEN=123456789:ABCDefGhIJKlmNoPQRsTUVwxyZ
+   ```
+
+### 2. Create the Mini App in BotFather
+1. In `@BotFather`, send the `/newapp` command (note: use `/newapp`, not `/newgame`).
+2. Select your newly created bot.
+3. Provide a title and description for the Mini App (e.g., "Chess Live Multiplayer").
+4. Upload a 640x360 app icon image when prompted.
+5. When prompted for the **Web App URL**, enter your deployed HTTPS URL (e.g. `https://your-chess-domain.com`).
+6. Set a short name for the app (e.g. `play` or `chess`). BotFather will generate your direct Mini App link:
+   ```
+   https://t.me/YourBotUsername/play
+   ```
+
+### 3. Deep Linking Support
+You can share direct links to join a specific match room automatically:
+```
+https://t.me/YourBotUsername/play?startapp=room_ROOMCODE
+```
+When opened, the Mini App extracts the room code, auto-populates the join input, and immediately joins the match room without manual code entry.
+
+---
+
 ## 🛠️ Tech Stack & Features
 * **Backend:** Node.js, Express, Socket.io, `chess.js` (authoritative rule validation).
 * **Frontend:** Vanilla JavaScript, HTML5, Tailwind CSS, Web Audio API (synthesized sounds).
