@@ -96,6 +96,44 @@ https://t.me/YourBotUsername/play?startapp=room_ROOMCODE
 ```
 When opened, the Mini App extracts the room code, auto-populates the join input, and immediately joins the match room without manual code entry.
 
+### 4. Register Bot Commands in BotFather
+To enable auto-complete for commands in Telegram:
+1. Open `@BotFather` and send `/setcommands`.
+2. Select your bot.
+3. Paste the following list:
+```text
+start - Play Chess Live inside Telegram
+help - How to play and game rules
+```
+
+### 5. Telegram Bot Service (`bot.js`)
+A standalone bot script (`bot.js`) powers interactive Telegram interactions:
+* `/start` responds with the game preview banner (`preview.png`), introductory text, and an inline **♟️ Play Chess Live** button launching the Mini App.
+* `/help` displays rules, time controls, and feature overviews.
+
+#### Running Locally
+```bash
+# Terminal 1 (Express & Socket.io Web Server)
+npm start
+
+# Terminal 2 (Telegram Bot Polling Worker)
+npm run bot
+```
+
+#### Deploying as a Background Worker on Render
+Render Web Services require listening on an incoming HTTP `$PORT`. Because the Telegram bot uses long-polling without needing an HTTP port, deploy it as an isolated **Background Worker**:
+1. On [Render](https://dashboard.render.com), click **New +** > **Background Worker**.
+2. Connect the same repository.
+3. Configure the settings:
+   * **Name:** `chess-telegram-bot`
+   * **Environment:** `Node`
+   * **Build Command:** `npm install`
+   * **Start Command:** `npm run bot`
+4. Set the Environment Variables:
+   * `BOT_TOKEN`: Your API token from `@BotFather`.
+   * `WEB_APP_URL`: Your deployed web service URL (e.g. `https://chess-j33o.onrender.com/`).
+5. Click **Create Background Worker**. The bot starts polling and handles `/start` and `/help` seamlessly.
+
 ---
 
 ## 🛠️ Tech Stack & Features

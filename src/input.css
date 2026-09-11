@@ -1,4 +1,7 @@
 @import "tailwindcss";
+@source "../public";
+
+/* Safelist dynamic classes added via JS: ring-1 ring-indigo-500/50 clock-danger */
 
 @theme {
   --color-board-light: #ebecd0;
@@ -316,3 +319,27 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #475569;
 }
+
+/* ─── Telegram Mini App Safe Area Insets ────────────────────────────────────── */
+header {
+  padding-top: max(0.625rem, env(safe-area-inset-top, 0px));
+  padding-left: max(1rem, env(safe-area-inset-left, 0px));
+  padding-right: max(1rem, env(safe-area-inset-right, 0px));
+}
+
+main {
+  padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
+  padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+}
+
+/* ─── Telegram Mini App Scoped Theme Rules ──────────────────────────────────── */
+body.telegram-app {
+  background-color: var(--tg-theme-bg-color, #090d16);
+  color: var(--tg-theme-text-color, #f1f5f9);
+}
+
+body.telegram-app header {
+  background-color: var(--tg-theme-secondary-bg-color, rgba(15, 23, 42, 0.75));
+}
+

@@ -35,7 +35,7 @@ app.use(helmet({
       scriptSrcAttr: ["'unsafe-inline'"], // needed for onclick/onsubmit handlers in HTML
       styleSrc: ["'self'", "'unsafe-inline'"],
       connectSrc: ["'self'", "ws:", "wss:"],
-      imgSrc: ["'self'", "data:"],
+      imgSrc: ["'self'", "data:", "https://telegram.org", "https://*.telegram.org"],
       fontSrc: ["'self'"],
     }
   },

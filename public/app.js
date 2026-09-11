@@ -1,3 +1,11 @@
+// ─── Immediate Telegram Mini App Viewport Expansion ───────────────────────────
+if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
+  try {
+    window.Telegram.WebApp.ready();
+    window.Telegram.WebApp.expand();
+  } catch (e) {}
+}
+
 // ─── Web Audio Sound Synthesizer ───────────────────────────────────────────────
 const AudioContext = window.AudioContext || window.webkitAudioContext;
 let audioCtx = null;
@@ -1763,19 +1771,17 @@ function applyTelegramTheme(tg) {
   const tp = tg.themeParams;
   const root = document.documentElement;
 
-  if (tp.bg_color) {
-    root.style.setProperty('--tg-theme-bg-color', tp.bg_color);
-    document.body.style.backgroundColor = tp.bg_color;
-  }
-  if (tp.text_color) {
-    root.style.setProperty('--tg-theme-text-color', tp.text_color);
-    document.body.style.color = tp.text_color;
-  }
+  // Set CSS variables on root
+  if (tp.bg_color) root.style.setProperty('--tg-theme-bg-color', tp.bg_color);
+  if (tp.text_color) root.style.setProperty('--tg-theme-text-color', tp.text_color);
   if (tp.hint_color) root.style.setProperty('--tg-theme-hint-color', tp.hint_color);
   if (tp.link_color) root.style.setProperty('--tg-theme-link-color', tp.link_color);
   if (tp.button_color) root.style.setProperty('--tg-theme-button-color', tp.button_color);
   if (tp.button_text_color) root.style.setProperty('--tg-theme-button-text-color', tp.button_text_color);
   if (tp.secondary_bg_color) root.style.setProperty('--tg-theme-secondary-bg-color', tp.secondary_bg_color);
+
+  // Add telegram-app class to body so CSS handles styles rather than overriding inline styles
+  document.body.classList.add('telegram-app');
 }
 
 function setupTelegramControls(tg) {
