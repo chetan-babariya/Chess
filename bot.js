@@ -1,15 +1,19 @@
 /**
  * Telegram Bot for Chess Live Mini App
- * Runs as an independent standalone process (e.g. Render Background Worker)
+ * Supports both:
+ * 1. Render Background Worker (pure long polling)
+ * 2. Render Web Service (long polling + minimal HTTP server to satisfy $PORT binding)
  */
 
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
+const http = require('http');
 const path = require('path');
 const fs = require('fs');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const WEB_APP_URL = process.env.WEB_APP_URL || 'https://chess-j33o.onrender.com/';
+const PORT = process.env.PORT;
 
 if (!BOT_TOKEN) {
   console.error('\n❌ ERROR: BOT_TOKEN is not set in environment variables!');
@@ -17,11 +21,25 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
+// ─── Dual-Mode Fallback: HTTP Server for Render Web Service Tier ───────────────
+// If PORT is provided (e.g. deployed as a free Render Web Service instead of
+// Background Worker), spin up a minimal health server to satisfy Render's port check.
+if (PORT) {
+  const healthServer = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Chess Live Telegram Bot OK');
+  });
+
+  healthServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`📡 Fallback HTTP server listening on port ${PORT} (satisfies Render Web Service port-binding)`);
+  });
+}
+
 // Clean trailing slash for URL concatenation
 const cleanWebAppUrl = WEB_APP_URL.replace(/\/+$/, '');
 const PREVIEW_IMAGE_URL = process.env.PREVIEW_IMAGE_URL || `${cleanWebAppUrl}/preview.png`;
 
-// Initialize Telegram Bot with polling
+// ─── Initialize Telegram Bot with Polling (v0.66 API) ──────────────────────────
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
 console.log('=================================================');
@@ -29,7 +47,30 @@ console.log('🤖 CHESS LIVE TELEGRAM BOT STARTED!');
 console.log('-------------------------------------------------');
 console.log(`> Web App URL:    ${WEB_APP_URL}`);
 console.log(`> Banner URL:     ${PREVIEW_IMAGE_URL}`);
+if (PORT) {
+  console.log(`> Service Mode:   Web Service (Port ${PORT})`);
+} else {
+  console.log(`> Service Mode:   Background Worker (No Port)`);
+}
 console.log('=================================================\n');
+
+// ─── Programmatic Command Menu Registration ───────────────────────────────────
+bot.setMyCommands([
+  {
+    command: 'start',
+    description: 'Play Chess Live inside Telegram'
+  },
+  {
+    command: 'help',
+    description: 'How to play and game rules'
+  }
+])
+  .then(() => {
+    console.log('✅ Telegram bot commands registered successfully with Telegram API');
+  })
+  .catch((err) => {
+    console.error('❌ Failed to register Telegram bot commands:', err.message);
+  });
 
 // ─── Help Message Text ────────────────────────────────────────────────────────
 function getHelpText() {
@@ -56,7 +97,7 @@ function getHelpText() {
 }
 
 // ─── /start Command ───────────────────────────────────────────────────────────
-bot.onText(/\/start/, async (msg) => {
+bot.onText(/^\/start(?:@\w+)?$/, async (msg) => {
   const chatId = msg.chat.id;
   const firstName = msg.from?.first_name || 'there';
 
@@ -119,7 +160,7 @@ bot.onText(/\/start/, async (msg) => {
 });
 
 // ─── /help Command ────────────────────────────────────────────────────────────
-bot.onText(/\/help/, (msg) => {
+bot.onText(/^\/help(?:@\w+)?$/, (msg) => {
   const chatId = msg.chat.id;
   bot.sendMessage(chatId, getHelpText(), {
     parse_mode: 'Markdown',
@@ -159,9 +200,17 @@ bot.on('callback_query', (query) => {
   }
 });
 
-// ─── Polling Error Logging ────────────────────────────────────────────────────
+// ─── Polling Error Logging (Log All Errors, Including EFATAL) ─────────────────
 bot.on('polling_error', (error) => {
-  if (error.code !== 'EFATAL') {
-    console.warn('[Telegram Bot Polling Notice]:', error.message || error);
-  }
+  console.error('❌ [Telegram Bot Polling Error]:', error.code || '', error.message || error);
 });
+
+// ─── Process Crash Containment ────────────────────────────────────────────────
+process.on('uncaughtException', (err) => {
+  console.error('❌ [FATAL] Uncaught Exception in Bot:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('❌ [FATAL] Unhandled Rejection in Bot:', reason);
+});
+
