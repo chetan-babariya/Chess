@@ -28,6 +28,7 @@ const server = http.createServer(app);
 
 // Helmet security headers — allow CDN scripts/styles, socket.io, and inline styles from Tailwind
 app.use(helmet({
+  frameguard: false, // CSP frame-ancestors supersedes X-Frame-Options and allows Telegram origins
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
@@ -37,6 +38,7 @@ app.use(helmet({
       connectSrc: ["'self'", "ws:", "wss:"],
       imgSrc: ["'self'", "data:", "https://telegram.org", "https://*.telegram.org"],
       fontSrc: ["'self'"],
+      frameAncestors: ["'self'", "https://web.telegram.org", "https://telegram.org"],
     }
   },
   crossOriginEmbedderPolicy: false,
